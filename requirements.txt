@@ -6,3 +6,4 @@ psycopg2-binary
 redis
 httpx
 python-multipart
+python-dotenv
