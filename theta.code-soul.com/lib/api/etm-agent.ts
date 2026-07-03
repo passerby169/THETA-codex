@@ -484,7 +484,7 @@ export const ETMAgentAPI = {
   }> {
     // taskId here is the backend job_id; maps to /api/train/{job_id}/status
     try {
-      const status = await SimpleETMAPI.getTrainStatus(parseInt(taskId, 10));
+      const status = await BackendAPI.getTrainStatus(parseInt(taskId, 10));
       return {
         task_id: taskId,
         status: status.status ?? status.message ?? "unknown",
@@ -494,7 +494,9 @@ export const ETMAgentAPI = {
     } catch {
       return { task_id: taskId, status: "unknown", logs: [], total_count: 0 };
     }
-  },(request: CreateTaskRequest & { job_id?: string }): Promise<TaskResponse> {
+   },
+
+  async createTask(request: CreateTaskRequest & { job_id?: string }): Promise<TaskResponse> {
     const userId = getCurrentUserId();
 
     // 使用后端适配器提交训练任务
