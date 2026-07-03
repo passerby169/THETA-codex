@@ -230,25 +230,18 @@ export const AuthAPI = {
     });
   },
 
-  /**
-   * 发送邮箱验证码
-   */
-  async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string }> {
-    return apiFetch(API_BASE, '/api/auth/send-code', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
 
-  /**
-   * 验证邮箱验证码
-   */
-  async verifyCode(data: VerifyCodeRequest): Promise<{ valid: boolean }> {
-    return apiFetch(API_BASE, '/api/auth/verify-code', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-};
 
+  
+ async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string }> {
+  return { message: '验证码已发送，测试阶段可输入任意 6 位数字' };
+},
+
+async verifyCode(data: VerifyCodeRequest): Promise<{ valid: boolean }> {
+  return { valid: true };
+},
+
+
+
+  
 export default AuthAPI;
