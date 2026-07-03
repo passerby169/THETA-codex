@@ -11,3 +11,4 @@ python-jose[cryptography]
 passlib[bcrypt]
 bcrypt
 requests
+email-validator
