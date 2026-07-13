@@ -611,7 +611,7 @@ def get_job_for_user(job_id: int, user_id: int, db: Session) -> TrainingJob:
 def get_training_status(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = get_job_for_user(job_id, current_user.id, db)
     message = job.error_message or (
-        "Training completed" if job.status == "succeeded" else "Training job is running on GPU provider"
+        "Training completed" if job.status == "succeeded" else "Training job is running on external training worker"
     )
     return TrainingStatusResponse(
         job_id=job.id,

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ETM Visualization Module
 ========================
 
@@ -115,3 +115,4 @@ if _HAS_EMBEDDING_SPACE:
     __all__.append('TopicEmbeddingSpaceVisualizer')
 if _HAS_DOC_UMAP:
     __all__.append('DocumentTopicUMAPVisualizer')
+

@@ -49,6 +49,14 @@ class StopwordManager:
         self._stopwords: Set[str] = set()
         self._detected_lang: Optional[str] = None
         self._lang_code: Optional[str] = None
+
+    def _chinese_ratio(self, text: str) -> float:
+        """Return the ratio of Chinese characters among CJK characters."""
+        cjk_chars = [char for char in text if '\u4e00' <= char <= '\u9fff' or '\uac00' <= char <= '\ud7af']
+        if not cjk_chars:
+            return 0.0
+        chinese_chars = [char for char in cjk_chars if '\u4e00' <= char <= '\u9fff']
+        return len(chinese_chars) / len(cjk_chars)
         
     def detect_language(self, text: str, sample_size: int = 1000) -> str:
         """
@@ -66,6 +74,10 @@ class StopwordManager:
             DetectorFactory.seed = 0
             
             sample_text = text[:sample_size] if len(text) > sample_size else text
+            if self._chinese_ratio(sample_text) >= 0.6:
+                self._detected_lang = 'zh'
+                self._lang_code = 'zh'
+                return 'zh'
             
             lang_code = detect(sample_text)
             self._lang_code = lang_code
@@ -108,6 +120,15 @@ class StopwordManager:
             step = n_docs // actual_sample_size
             sample_indices = list(range(0, n_docs, step))[:actual_sample_size]
         
+        combined_sample = ' '.join(str(documents[idx])[:500] for idx in sample_indices)
+        if self._chinese_ratio(combined_sample) >= 0.6:
+            self._detected_lang = 'zh'
+            self._lang_code = 'zh'
+            self._lang_distribution = {'zh': 1.0}
+            self._is_multilingual = False
+            print(f"[StopwordManager] Chinese character ratio detected; using zh")
+            return 'zh'
+
         lang_counts = Counter()
         for idx in sample_indices:
             try:

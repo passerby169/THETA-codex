@@ -1,4 +1,4 @@
-"""
+﻿"""
 Topic Visualization Tools for ETM
 
 This module provides visualization tools for ETM results:
@@ -197,9 +197,9 @@ class TopicVisualizer:
         chinese_available = [f for f in chinese_fonts if f in available_fonts]
         
         if chinese_available:
-            print(f"✓ Chinese fonts available: {chinese_available[0]}")
+            print(f"[OK] Chinese fonts available: {chinese_available[0]}")
         else:
-            print("⚠ Warning: No Chinese fonts found, text may appear as squares")
+            print("[WARN] Warning: No Chinese fonts found, text may appear as squares")
             print("  Please install: apt-get install -y fonts-noto-cjk fonts-wqy-zenhei")
     
     def _get_label(self, key: str) -> str:
@@ -1373,3 +1373,4 @@ if __name__ == "__main__":
         timestamp=args.timestamp,
         show_wordcloud=not args.no_wordcloud
     )
+

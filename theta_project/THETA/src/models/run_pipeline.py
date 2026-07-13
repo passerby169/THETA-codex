@@ -379,7 +379,7 @@ def print_data_check_result(model: str, status: Dict[str, Any]):
     all_ok = status['all_exist']
     
     for name, info in status['files'].items():
-        icon = '✓' if info['exists'] else '✗'
+        icon = '[OK]' if info['exists'] else '[MISSING]'
         size_str = f"({info['size_mb']} MB)" if info['exists'] else "(missing)"
         print(f"  {icon} {name}: {size_str}")
         if not info['exists']:
@@ -537,6 +537,22 @@ def run_theta(args) -> Dict[str, Any]:
         print("  Running THETA pipeline...")
         ret = subprocess.run(cmd, cwd=str(Path(__file__).parent))
         result['train_status'] = 'completed' if ret.returncode == 0 else 'failed'
+        if ret.returncode == 0:
+            metrics_candidates = [
+                train_exp_dir / f"metrics_{args.mode}.json",
+                train_exp_dir / "metrics.json",
+            ]
+            viz_dir = train_exp_dir / args.language / args.mode
+            result['eval_status'] = (
+                'skipped' if args.skip_eval
+                else 'completed' if any(path.exists() for path in metrics_candidates)
+                else 'files_not_found'
+            )
+            result['viz_status'] = (
+                'skipped' if args.skip_viz
+                else 'completed' if viz_dir.exists() and any(viz_dir.rglob("*"))
+                else 'files_not_found'
+            )
         # Sweep-only: copy results to per-K dir under default_user so each K is preserved
         if ret.returncode == 0 and data_exp_dir and args.exp_name:
             import shutil

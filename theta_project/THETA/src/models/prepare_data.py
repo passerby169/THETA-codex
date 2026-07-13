@@ -47,6 +47,28 @@ from config import (
 )
 
 
+def _mojibake_score(df: pd.DataFrame) -> int:
+    sample = df.astype(str).head(50).to_string()
+    return sample.count('�') + sample.count('锟') + sample.count('Ã') + sample.count('鏄') + sample.count('鎶')
+
+
+def read_csv_safely(path: Path) -> pd.DataFrame:
+    """Read CSV files from user uploads with common Chinese encoding fallbacks."""
+    candidates = []
+    for encoding in ['utf-8-sig', 'utf-8', 'gb18030', 'gbk']:
+        try:
+            df = pd.read_csv(path, encoding=encoding)
+            candidates.append((_mojibake_score(df), encoding, df))
+        except UnicodeDecodeError:
+            continue
+    if not candidates:
+        return pd.read_csv(path)
+    candidates.sort(key=lambda item: item[0])
+    score, encoding, df = candidates[0]
+    print(f"  [CSV] Loaded with encoding={encoding}, mojibake_score={score}")
+    return df
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Data preprocessing script')
     parser.add_argument('--dataset', type=str, required=True, help='Dataset name')
@@ -291,7 +313,7 @@ def run_dataclean(raw_input: str, dataset: str, language: str = None) -> Path:
     elif raw_path.suffix == '.csv':
         # If input is CSV, clean directly
         print(f"  Input is CSV file, performing text cleaning...")
-        df = pd.read_csv(raw_path)
+        df = read_csv_safely(raw_path)
         
         # Find text column
         text_col = None
@@ -496,14 +518,14 @@ def print_column_detection_result(detection_result: Dict[str, Any], df: pd.DataF
         sample = df[time_col].dropna().head(5).tolist()
         
         if time_col == 'timestamp':
-            print(f"\n[Time Column] ✓ '{time_col}' (type: {time_type})")
+            print(f"\n[Time Column] [OK] '{time_col}' (type: {time_type})")
         else:
-            print(f"\n[Time Column] ⚠ Using legacy column '{time_col}' (type: {time_type})")
+            print(f"\n[Time Column] [WARN] Using legacy column '{time_col}' (type: {time_type})")
             print(f"  → Please rename to 'timestamp' for strict compliance")
         print(f"  Sample values: {sample}")
         print(f"  Note: All formats will be converted to YEAR for DTM analysis")
     else:
-        print(f"\n[Time Column] ✗ Not detected")
+        print(f"\n[Time Column] [ERR] Not detected")
         print(f"  Tip: Add a column named 'timestamp'")
         print(f"  Supported formats: 2026 | 2026-10-17 | 2026-10-17 14:30:00")
     
@@ -516,9 +538,9 @@ def print_column_detection_result(detection_result: Dict[str, Any], df: pd.DataF
     if cov_cols:
         has_prefix = all(col.startswith('cov_') for col in cov_cols)
         if has_prefix:
-            print(f"\n[Covariate Columns] ✓ Detected {len(cov_cols)} columns:")
+            print(f"\n[Covariate Columns] [OK] Detected {len(cov_cols)} columns:")
         else:
-            print(f"\n[Covariate Columns] ⚠ Detected {len(cov_cols)} potential columns (missing 'cov_' prefix):")
+            print(f"\n[Covariate Columns] [WARN] Detected {len(cov_cols)} potential columns (missing 'cov_' prefix):")
         
         for col in cov_cols[:10]:  # Show max 10
             info = detection_result['column_info'].get(col, {})
@@ -531,7 +553,7 @@ def print_column_detection_result(detection_result: Dict[str, Any], df: pd.DataF
         if len(cov_cols) > 10:
             print(f"  ... and {len(cov_cols) - 10} more")
     else:
-        print(f"\n[Covariate Columns] ✗ None detected")
+        print(f"\n[Covariate Columns] [ERR] None detected")
         print(f"  Tip: Add columns with 'cov_' prefix (e.g., cov_province, cov_category)")
     
     # Print covariate warning if exists
@@ -582,7 +604,7 @@ def load_texts(data_path: Path, label_col: str = 'label') -> Tuple[List[str], Op
         Tuple of (texts list, labels array or None)
     """
     print(f"Loading data from {data_path}")
-    df = pd.read_csv(data_path)
+    df = read_csv_safely(data_path)
     
     # Find text column - strict mode: require 'text' column
     text_col = None
@@ -638,14 +660,21 @@ def generate_bow(texts: List[str], vocab_size: int, output_dir: Path) -> Tuple[s
     
     print(f"\n[Generating BOW] vocab_size={vocab_size}")
     
+    min_df = 1 if len(texts) < 200 else 5
     vocab_config = VocabConfig(
         max_vocab_size=vocab_size,
-        min_df=5,
+        min_df=min_df,
         max_df_ratio=0.7
     )
+    print(f"  [Vocab] min_df={min_df}, documents={len(texts)}")
     vocab_builder = VocabBuilder(config=vocab_config)
     vocab_builder.add_documents(texts, dataset_name="dataset")
     vocab_builder.build_vocab()
+    if vocab_builder.get_vocab_size() == 0:
+        raise ValueError(
+            "Vocabulary is empty after tokenization. Check CSV encoding, text column content, "
+            "or provide more diverse text data."
+        )
     
     bow_generator = BOWGenerator(vocab_builder)
     bow_output = bow_generator.generate_bow(texts, dataset_name="dataset")
@@ -664,8 +693,8 @@ def generate_bow(texts: List[str], vocab_size: int, output_dir: Path) -> Tuple[s
     with open(output_dir / 'vocab.json', 'w', encoding='utf-8') as f:
         json.dump(vocab, f, ensure_ascii=False)
     
-    print(f"  ✓ BOW shape: {bow_output.bow_matrix.shape}")
-    print(f"  ✓ Saved to {output_dir}")
+    print(f"  [OK] BOW shape: {bow_output.bow_matrix.shape}")
+    print(f"  [OK] Saved to {output_dir}")
     
     return bow_output.bow_matrix, vocab
 
@@ -713,7 +742,7 @@ def generate_qwen_embeddings(
         with open(output_dir / 'metadata.json', 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        print(f"  ✓ Embeddings shape: {embeddings.shape}")
+        print(f"  [OK] Embeddings shape: {embeddings.shape}")
         print(f"  Saved to {output_dir}")
         return embeddings
 
@@ -866,7 +895,7 @@ def generate_qwen_embeddings(
     with open(output_dir / meta_filename, 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"  ✓ Embeddings shape: {embeddings.shape}")
+    print(f"  [OK] Embeddings shape: {embeddings.shape}")
     print(f"  Saved to {output_dir}")
     
     # Clean up GPU memory
@@ -900,8 +929,8 @@ def generate_vocab_embeddings(
         output_dir.mkdir(parents=True, exist_ok=True)
         np.save(output_dir / 'vocab_embeddings.npy', embeddings)
 
-        print(f"  ✓ Vocab embeddings shape: {embeddings.shape}")
-        print(f"  ✓ Saved to {output_dir}")
+        print(f"  [OK] Vocab embeddings shape: {embeddings.shape}")
+        print(f"  [OK] Saved to {output_dir}")
         return embeddings
 
     from model.vocab_embedder import VocabEmbedder
@@ -921,8 +950,8 @@ def generate_vocab_embeddings(
     # Save
     np.save(output_dir / 'vocab_embeddings.npy', embeddings)
     
-    print(f"  ✓ Vocab embeddings shape: {embeddings.shape}")
-    print(f"  ✓ Saved to {output_dir}")
+    print(f"  [OK] Vocab embeddings shape: {embeddings.shape}")
+    print(f"  [OK] Saved to {output_dir}")
     
     return embeddings
 
@@ -960,8 +989,8 @@ def generate_sbert_embeddings(texts: List[str], output_dir: Path, batch_size: in
     output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir / 'sbert_embeddings.npy', embeddings)
     
-    print(f"  ✓ SBERT embeddings shape: {embeddings.shape}")
-    print(f"  ✓ Saved to {output_dir}")
+    print(f"  [OK] SBERT embeddings shape: {embeddings.shape}")
+    print(f"  [OK] Saved to {output_dir}")
     
     return embeddings
 
@@ -1022,8 +1051,8 @@ def generate_word2vec_embeddings(texts: List[str], vocab: List[str], output_dir:
     output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir / 'word2vec_embeddings.npy', embeddings)
     
-    print(f"  ✓ Word2Vec embeddings shape: {embeddings.shape}")
-    print(f"  ✓ Saved to {output_dir}")
+    print(f"  [OK] Word2Vec embeddings shape: {embeddings.shape}")
+    print(f"  [OK] Saved to {output_dir}")
     
     return embeddings
 
@@ -1549,7 +1578,7 @@ def check_files(args):
         for name, path in files.items():
             if path and path.exists():
                 size_mb = path.stat().st_size / 1024 / 1024
-                print(f"  ✓ {name}: {size_mb:.2f} MB")
+                print(f"  [OK] {name}: {size_mb:.2f} MB")
             else:
                 print(f"  {name}: missing")
                 if path:
@@ -1576,7 +1605,7 @@ def check_files(args):
         for name, path in files.items():
             if path.exists():
                 size_mb = path.stat().st_size / 1024 / 1024
-                print(f"  ✓ {name}: {size_mb:.2f} MB")
+                print(f"  [OK] {name}: {size_mb:.2f} MB")
             else:
                 print(f"  {name}: missing")
 

@@ -667,7 +667,7 @@ def train_two_stage(
                 model_to_save = model_stage1.module if use_ddp else model_stage1
                 model_to_save.save_pretrained(lora_save_dir)
 
-                logger.info(f"✓ Stage 1 best model saved to {lora_save_dir}")
+                logger.info(f"[OK] Stage 1 best model saved to {lora_save_dir}")
                 logger.info(f"  - adapter_config.json")
                 logger.info(f"  - adapter_model.safetensors")
 
@@ -709,7 +709,7 @@ def train_two_stage(
     embedding_model.eval()
 
     if is_main:
-        logger.info("✓ Embedding model loaded and frozen")
+        logger.info("[OK] Embedding model loaded and frozen")
 
     # Generate new embeddings using fine-tuned model for FULL dataset
     if is_main:
@@ -750,8 +750,8 @@ def train_two_stage(
     new_doc_embeddings = np.vstack(new_doc_embeddings)
 
     if is_main:
-        logger.info(f"✓ New embeddings generated: shape={new_doc_embeddings.shape}")
-        logger.info(f"✓ Alignment verified: {new_doc_embeddings.shape[0]} embeddings == {bow_matrix.shape[0]} BOW rows")
+        logger.info(f"[OK] New embeddings generated: shape={new_doc_embeddings.shape}")
+        logger.info(f"[OK] Alignment verified: {new_doc_embeddings.shape[0]} embeddings == {bow_matrix.shape[0]} BOW rows")
 
     # Create NEW dataset and dataloaders for Stage 2 using new_doc_embeddings
     dataset_stage2 = ETMDataset(
@@ -1443,11 +1443,11 @@ def save_results(
     
     # Save topic words
     topic_words_dict = {str(k): words for k, words in topic_words}
-    with open(os.path.join(config.model_dir, "topic_words.json"), 'w') as f:
+    with open(os.path.join(config.model_dir, "topic_words.json"), 'w', encoding='utf-8') as f:
         json.dump(topic_words_dict, f, indent=2, ensure_ascii=False)
     
     # Save training history
-    with open(os.path.join(config.model_dir, "training_history.json"), 'w') as f:
+    with open(os.path.join(config.model_dir, "training_history.json"), 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2)
     
     # Save model weights
@@ -1508,7 +1508,7 @@ def run_evaluation(
     theta = np.load(os.path.join(config.model_dir, "theta.npy"))
     beta = np.load(os.path.join(config.model_dir, "beta.npy"))
     
-    with open(os.path.join(config.model_dir, "topic_words.json"), 'r') as f:
+    with open(os.path.join(config.model_dir, "topic_words.json"), 'r', encoding='utf-8') as f:
         topic_words = json.load(f)
     
     # Load BOW matrix from bow_dir (or regenerate if not exists)

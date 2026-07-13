@@ -287,11 +287,19 @@ function DashboardContent() {
             const numId = parseInt(p.taskId.replace("job-", ""), 10);
             const result = results.find((r, i) => jobIds[i] === numId);
             if (result) {
-              const newStatus = result.status === "succeeded" ? "completed"
+              const newStatus = result.status === "completed" || result.status === "succeeded" ? "completed"
                 : result.status === "failed" ? "error"
-                : result.status === "running" ? "running"
+                : result.status === "running" || result.status === "training" ? "running"
                 : p.pipelineStatus;
-              return { ...p, pipelineStatus: newStatus };
+              return {
+                ...p,
+                pipelineStatus: newStatus,
+                status: newStatus === "completed" ? "completed"
+                  : newStatus === "error" ? "no_result"
+                  : newStatus === "running" ? "vectorizing"
+                  : p.status,
+                hasResults: newStatus === "completed" ? true : p.hasResults,
+              };
             }
           }
           return p;

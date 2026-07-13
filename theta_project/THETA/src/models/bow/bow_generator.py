@@ -95,6 +95,11 @@ class BOWGenerator:
             BOWOutput with BOW matrix and statistics
         """
         num_docs = len(texts)
+        if self.vocab_size <= 0:
+            raise ValueError(
+                "Vocabulary is empty; cannot generate BOW matrix. "
+                "Check text encoding, tokenization, and min_df settings."
+            )
         
         if self.dev_mode:
             print(f"[DEV] Generating BOW for {dataset_name}: {num_docs} documents")

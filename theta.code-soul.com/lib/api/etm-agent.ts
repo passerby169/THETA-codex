@@ -115,6 +115,12 @@ export interface TaskResponse {
   error?: string;
 }
 
+function normalizeTaskStatus(status?: string): TaskResponse['status'] {
+  if (status === 'succeeded') return 'completed';
+  if (status === 'running') return 'training';
+  return (status || 'pending') as TaskResponse['status'];
+}
+
 export interface CreateTaskRequest {
   dataset: string;
   mode: 'zero_shot' | 'unsupervised' | 'supervised';
@@ -428,7 +434,7 @@ export const ETMAgentAPI = {
   async getTrainStatusByJobId(jobId: number): Promise<{status: string; job_id: number} | null> {
     try {
       const result = await BackendAPI.getTrainStatus(jobId);
-      return result;
+      return { ...result, status: normalizeTaskStatus(result.status) };
     } catch {
       return null;
     }
@@ -463,7 +469,7 @@ export const ETMAgentAPI = {
       const status = await BackendAPI.getTrainStatus(jobId);
       return {
         task_id: String(status.job_id),
-        status: status.status === 'running' ? 'training' : status.status,
+        status: normalizeTaskStatus(status.status),
         progress: status.status === 'succeeded' ? 100 : status.status === 'failed' ? 0 : 50,
         message: status.message || status.status,
         error_message: status.error_message,
@@ -487,7 +493,7 @@ export const ETMAgentAPI = {
       const status = await BackendAPI.getTrainStatus(parseInt(taskId, 10));
       return {
         task_id: taskId,
-        status: status.status ?? status.message ?? "unknown",
+        status: normalizeTaskStatus(status.status ?? status.message ?? "unknown"),
         logs: [],
         total_count: 0,
       };
@@ -523,7 +529,7 @@ export const ETMAgentAPI = {
 
       return {
         task_id: String(result.job_id),
-        status: result.status === 'running' ? 'training' : result.status,
+        status: normalizeTaskStatus(result.status),
         progress: 0,
         message: '训练任务已提交',
         dataset: request.dataset,
@@ -554,7 +560,7 @@ export const ETMAgentAPI = {
         (status) => {
           onProgress?.({
             task_id: String(status.job_id),
-            status: status.status === 'running' ? 'training' : status.status,
+            status: normalizeTaskStatus(status.status),
             progress: status.status === 'succeeded' ? 100 : status.status === 'failed' ? 0 : 50,
             message: status.message || status.status,
         error_message: status.error_message,
@@ -566,7 +572,7 @@ export const ETMAgentAPI = {
 
       return {
         task_id: String(finalStatus.job_id),
-        status: finalStatus.status === 'running' ? 'training' : finalStatus.status,
+        status: normalizeTaskStatus(finalStatus.status),
         progress: finalStatus.status === 'succeeded' ? 100 : finalStatus.status === 'failed' ? 0 : 50,
         message: finalStatus.message || finalStatus.status,
       };

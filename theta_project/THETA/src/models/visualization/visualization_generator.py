@@ -1,4 +1,4 @@
-"""
+﻿"""
 Visualization Generator
 
 Supports global charts and per-topic charts with bilingual labels (English/Chinese).
@@ -166,9 +166,9 @@ class VisualizationGenerator:
             chinese_available = [f for f in chinese_fonts if f in available_fonts]
             
             if chinese_available:
-                print(f"✓ Chinese fonts available: {chinese_available[0]}")
+                print(f"[OK] Chinese fonts available: {chinese_available[0]}")
             else:
-                print("⚠ Warning: No Chinese fonts found, text may appear as squares")
+                print("[WARN] Warning: No Chinese fonts found, text may appear as squares")
                 print("  Please install: apt-get install -y fonts-noto-cjk fonts-wqy-zenhei")
         else:
             # English font setup
@@ -368,7 +368,7 @@ class VisualizationGenerator:
         csv_filename = '主题表.csv' if self.language == 'zh' else 'topic_table.csv'
         csv_path = self.global_dir / csv_filename
         csv_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        print(f"  ✓ {csv_filename}")
+        print(f"  [OK] {csv_filename}")
     
     def generate_topic_network(self):
         """Generate topic correlation network graph."""
@@ -422,14 +422,14 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_network'), dpi=self.dpi, 
                    bbox_inches='tight', pad_inches=0.5, facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_network')}")
+        print(f"  [OK] {self._get_filename('topic_network')}")
     
     def generate_doc_clusters(self):
         """Generate document clustering visualization with UMAP (publication quality)."""
         try:
             import umap
         except ImportError:
-            print("  ⚠ doc_clusters skipped (umap not installed, run: pip install umap-learn)")
+            print("  [WARN] doc_clusters skipped (umap not installed, run: pip install umap-learn)")
             return
         
         n_samples = min(10000, self.n_docs)
@@ -503,7 +503,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('doc_clusters'), dpi=self.dpi, 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('doc_clusters')}")
+        print(f"  [OK] {self._get_filename('doc_clusters')}")
     
     def generate_clustering_heatmap(self):
         """
@@ -527,11 +527,11 @@ class VisualizationGenerator:
         n_valid = valid_topics.sum()
         
         if n_valid < 2:
-            print(f"  ⚠ clustering_heatmap skipped (only {n_valid} valid topics)")
+            print(f"  [WARN] clustering_heatmap skipped (only {n_valid} valid topics)")
             return
         
         if n_valid < self.n_topics:
-            print(f"  ⚠ Filtering {self.n_topics - n_valid} zero-variance topics for heatmap")
+            print(f"  [WARN] Filtering {self.n_topics - n_valid} zero-variance topics for heatmap")
             theta_filtered = theta_filtered[:, valid_topics]
         
         topic_corr = np.corrcoef(theta_filtered.T)
@@ -615,14 +615,14 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('clustering_heatmap'), dpi=self.dpi, 
                     bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('clustering_heatmap')}")
+        print(f"  [OK] {self._get_filename('clustering_heatmap')}")
     
     def generate_clusters_with_outliers(self):
         """Generate document clusters with outlier detection using UMAP (publication quality)."""
         try:
             import umap
         except ImportError:
-            print("  ⚠ clusters_outliers skipped (umap not installed, run: pip install umap-learn)")
+            print("  [WARN] clusters_outliers skipped (umap not installed, run: pip install umap-learn)")
             return
         from sklearn.cluster import DBSCAN
         
@@ -722,7 +722,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('clusters_outliers'), dpi=self.dpi, 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('clusters_outliers')}")
+        print(f"  [OK] {self._get_filename('clusters_outliers')}")
     
     def generate_topic_proportion_pie(self):
         """Generate topic proportion pie chart showing top 10 topics + Others."""
@@ -799,7 +799,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_proportion_pie'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_proportion_pie')}")
+        print(f"  [OK] {self._get_filename('topic_proportion_pie')}")
     
     def generate_representative_topic_evolution(self):
         """Generate representative topic evolution chart with smoothed curves."""
@@ -863,7 +863,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('representative_topic_evolution'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('representative_topic_evolution')}")
+        print(f"  [OK] {self._get_filename('representative_topic_evolution')}")
     
     def generate_topic_similarity_evolution(self):
         """Generate topic similarity evolution over time."""
@@ -907,7 +907,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_similarity_evolution'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_similarity_evolution')}")
+        print(f"  [OK] {self._get_filename('topic_similarity_evolution')}")
     
     def generate_all_topics_strength_table(self):
         """Generate a table showing all topics' strength over time."""
@@ -952,7 +952,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('all_topics_strength_table'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('all_topics_strength_table')}")
+        print(f"  [OK] {self._get_filename('all_topics_strength_table')}")
     
     def generate_domain_topic_distribution(self):
         """Generate domain-topic distribution over time."""
@@ -1004,12 +1004,12 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('domain_topic_distribution'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('domain_topic_distribution')}")
+        print(f"  [OK] {self._get_filename('domain_topic_distribution')}")
     
     def generate_doc_volume(self):
         """Generate document volume over time chart."""
         if self.timestamps is None:
-            print(f"  ⚠ doc_volume skipped (no timestamps)")
+            print(f"  [WARN] doc_volume skipped (no timestamps)")
             return
         
         years = [t.year for t in self.timestamps]
@@ -1029,19 +1029,19 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('doc_volume'), dpi=self.dpi, 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('doc_volume')}")
+        print(f"  [OK] {self._get_filename('doc_volume')}")
     
     def generate_kl_divergence(self):
         """Generate KL divergence temporal chart."""
         if self.timestamps is None:
-            print(f"  ⚠ kl_divergence skipped (no timestamps)")
+            print(f"  [WARN] kl_divergence skipped (no timestamps)")
             return
         
         years = np.array([t.year for t in self.timestamps])
         unique_years = sorted(set(years))
         
         if len(unique_years) < 2:
-            print(f"  ⚠ kl_divergence skipped (not enough time periods)")
+            print(f"  [WARN] kl_divergence skipped (not enough time periods)")
             return
         
         kl_distances = []
@@ -1081,12 +1081,12 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('kl_divergence'), dpi=self.dpi, 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('kl_divergence')}")
+        print(f"  [OK] {self._get_filename('kl_divergence')}")
     
     def generate_dimension_heatmap(self):
         """Generate dimension-topic heatmap."""
         if self.dimension_values is None:
-            print(f"  ⚠ dim_heatmap skipped (no dimension_values)")
+            print(f"  [WARN] dim_heatmap skipped (no dimension_values)")
             return
         
         unique_dims = sorted(set(self.dimension_values))
@@ -1114,7 +1114,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('dim_heatmap'), dpi=self.dpi, 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('dim_heatmap')}")
+        print(f"  [OK] {self._get_filename('dim_heatmap')}")
     
     # ========== PER-TOPIC CHARTS ==========
     
@@ -1321,7 +1321,7 @@ class VisualizationGenerator:
             plt.savefig(self.global_dir / self._get_filename('training_loss'), dpi=self.dpi,
                        bbox_inches='tight', facecolor='white')
             plt.close()
-            print(f"  ✓ {self._get_filename('training_loss')}")
+            print(f"  [OK] {self._get_filename('training_loss')}")
         
         # Figure 2: Reconstruction Loss and KL Loss
         if 'recon_loss' in self.training_history or 'kl_loss' in self.training_history:
@@ -1338,7 +1338,7 @@ class VisualizationGenerator:
             plt.savefig(self.global_dir / self._get_filename('training_recon_kl'), dpi=self.dpi,
                        bbox_inches='tight', facecolor='white')
             plt.close()
-            print(f"  ✓ {self._get_filename('training_recon_kl')}")
+            print(f"  [OK] {self._get_filename('training_recon_kl')}")
         
         # Figure 3: Perplexity
         if 'perplexity' in self.training_history:
@@ -1351,7 +1351,7 @@ class VisualizationGenerator:
             plt.savefig(self.global_dir / self._get_filename('training_perplexity'), dpi=self.dpi,
                        bbox_inches='tight', facecolor='white')
             plt.close()
-            print(f"  ✓ {self._get_filename('training_perplexity')}")
+            print(f"  [OK] {self._get_filename('training_perplexity')}")
         
         # Remove training summary figure as requested
         # # Figure 4: Training Summary
@@ -1375,7 +1375,7 @@ class VisualizationGenerator:
         #     plt.savefig(self.global_dir / self._get_filename('training_summary'), dpi=self.dpi,
         #                bbox_inches='tight', facecolor='white')
         #     plt.close()
-        #     print(f"  ✓ {self._get_filename('training_summary')}")
+        #     print(f"  [OK] {self._get_filename('training_summary')}")
     
     def generate_vocab_evolution(self):
         """Generate vocabulary evolution chart (top words frequency over time)."""
@@ -1433,7 +1433,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('vocab_evolution'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('vocab_evolution')}")
+        print(f"  [OK] {self._get_filename('vocab_evolution')}")
     
     def generate_topic_coherence_chart(self):
         """Generate topic coherence chart from metrics."""
@@ -1481,7 +1481,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_coherence'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_coherence')}")
+        print(f"  [OK] {self._get_filename('topic_coherence')}")
     
     def generate_topic_diversity_chart(self):
         """Generate topic diversity charts from metrics (split into separate figures)."""
@@ -1521,7 +1521,7 @@ class VisualizationGenerator:
             plt.savefig(self.global_dir / self._get_filename('topic_exclusivity'), dpi=self.dpi,
                        bbox_inches='tight', facecolor='white')
             plt.close()
-            print(f"  ✓ {self._get_filename('topic_exclusivity')}")
+            print(f"  [OK] {self._get_filename('topic_exclusivity')}")
     
     def generate_metrics_summary(self):
         """Deprecated: Overlaps with generate_7_core_metrics_chart. Skipped."""
@@ -1614,7 +1614,7 @@ class VisualizationGenerator:
         
         plt.savefig(self.global_dir / self._get_filename('7_core_metrics'), dpi=self.dpi, bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('7_core_metrics')}")
+        print(f"  [OK] {self._get_filename('7_core_metrics')}")
     
     def generate_topic_significance_chart(self):
         """Generate topic significance chart for visualization.
@@ -1656,7 +1656,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_significance'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_significance')}")
+        print(f"  [OK] {self._get_filename('topic_significance')}")
     
     def generate_topic_num_evaluation(self, k_evaluation_data: dict = None):
         """Generate topic number evaluation chart showing metrics across different K values.
@@ -1721,7 +1721,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_num_evaluation'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_num_evaluation')}")
+        print(f"  [OK] {self._get_filename('topic_num_evaluation')}")
     
     def _load_k_evaluation_data(self) -> dict:
         """Load evaluation data for different K values from evaluation directory.
@@ -1927,9 +1927,9 @@ class VisualizationGenerator:
         # Also save as static image if possible
         try:
             fig.write_image(str(self.global_dir / 'topic_sankey.png'), scale=2)
-            print("  ✓ topic_sankey.png/html")
+            print("  [OK] topic_sankey.png/html")
         except:
-            print("  ✓ topic_sankey.html (static image requires kaleido)")
+            print("  [OK] topic_sankey.html (static image requires kaleido)")
             self._generate_sankey_matplotlib()
     
     def _generate_sankey_matplotlib(self):
@@ -2146,7 +2146,7 @@ class VisualizationGenerator:
         plt.savefig(self.global_dir / self._get_filename('topic_sankey'), dpi=self.dpi,
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        print(f"  ✓ {self._get_filename('topic_sankey')}")
+        print(f"  [OK] {self._get_filename('topic_sankey')}")
     
     def _draw_sankey_flow(self, ax, x1, y1_bot, y1_top, x2, y2_bot, y2_top, color, alpha=0.4):
         """绘制平滑贝塞尔曲线流向"""
@@ -2270,7 +2270,7 @@ class VisualizationGenerator:
                     chart_count += 3
                 except Exception as e:
                     print(f"[Error] evolution: {e}", end=' ')
-            print("✓")
+            print("[OK]")
         
         print(f"\n{'='*60}")
         print(f"Done! Total charts generated: ~{chart_count}")
@@ -2525,3 +2525,4 @@ if __name__ == "__main__":
     #
     # Per-Topic:
     """)
+

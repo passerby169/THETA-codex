@@ -1,0 +1,12 @@
+# CPU queue worker dependencies.
+#
+# This file is intentionally separate from requirements.txt because local CPU
+# training does not need Alibaba PAI-DLC SDK packages.
+
+python-dotenv>=1.0.0
+redis>=5.0.0
+requests>=2.31.0
+boto3>=1.34.0
+botocore>=1.34.0
+
+-r THETA/src/models/requirements.txt
