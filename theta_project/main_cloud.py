@@ -327,6 +327,72 @@ def result_path_key(username: str, dataset: str, model: str) -> str:
     return ""
 
 
+def result_objects(result_path: str):
+    prefix = f"{result_path.rstrip('/')}/"
+    return [
+        entry
+        for entry in storage.list_objects(prefix)
+        if not entry.is_prefix and not entry.key.endswith("/")
+    ]
+
+
+def result_relative_path(key: str, result_path: str) -> str:
+    prefix = f"{result_path.rstrip('/')}/"
+    if key.startswith(prefix):
+        return key[len(prefix):]
+    return key
+
+
+def is_visualization_key(key: str) -> bool:
+    lower = key.lower()
+    if not lower.endswith((".png", ".jpg", ".jpeg", ".html", ".csv")):
+        return False
+    return (
+        "visualization" in lower
+        or "/global/" in lower
+        or "/topic/" in lower
+    )
+
+
+def normalized_visualization_path(relative: str) -> str:
+    value = relative.replace("\\", "/")
+    if value.startswith("visualization/"):
+        value = value[len("visualization/"):]
+    if value.startswith("zh/zero_shot/"):
+        value = value[len("zh/zero_shot/"):]
+    elif value.startswith("zh/"):
+        value = value[len("zh/"):]
+    return value
+
+
+def find_result_file(result_path: str, filename: str, contains: Optional[str] = None) -> Optional[str]:
+    matches = []
+    for entry in result_objects(result_path):
+        lower = entry.key.lower()
+        if not lower.endswith(filename.lower()):
+            continue
+        if contains and contains.lower() not in lower:
+            continue
+        matches.append(entry.key)
+    if not matches:
+        return None
+    return sorted(matches, key=lambda key: (0 if "/theta/" in key.lower() else 1, len(key), key))[0]
+
+
+def parse_topic_table(content: str) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    for index, row in enumerate(csv.DictReader(io.StringIO(content))):
+        raw_topic_id = row.get("topic_id") or row.get("topic") or str(index + 1)
+        try:
+            topic_id = str(int(raw_topic_id) - 1)
+        except Exception:
+            topic_id = str(index)
+        raw_keywords = row.get("keywords") or row.get("关键词") or row.get("words") or ""
+        keywords = [kw.strip() for kw in raw_keywords.replace("，", ",").split(",") if kw.strip()]
+        parsed[topic_id] = [[kw, 1.0] for kw in keywords[:10]]
+    return parsed
+
+
 @app.get("/health")
 def health():
     return {
@@ -662,9 +728,14 @@ def get_training_summary(job_id: int, current_user: User = Depends(get_current_u
     file_record = db.query(File).filter(File.id == job.file_id).first()
     dataset = file_to_response(file_record).dataset_name if file_record else ""
     top_words: List[List[str]] = []
-    if dataset:
+    if dataset and job.run_id:
         for model in ["theta", job.model_type or "theta"]:
-            key = f"{storage.results_prefix(current_user.username, dataset)}{model}/{job.run_id}/topic_words.json"
+            result_path = result_path_key(current_user.username, dataset, model)
+            if not result_path:
+                continue
+            key = find_result_file(result_path, "topic_words.json")
+            if not key:
+                continue
             try:
                 payload = storage.get_object_json(key)
                 if isinstance(payload, dict):
@@ -733,7 +804,7 @@ def list_datasets(current_user: User = Depends(get_current_user)):
             chart_count = sum(
                 1
                 for obj in storage.list_objects(entry.key)
-                if obj.key.lower().endswith((".png", ".jpg", ".jpeg")) and "visualization" in obj.key.lower()
+                if obj.key.lower().endswith((".png", ".jpg", ".jpeg")) and is_visualization_key(obj.key)
             )
             if chart_count > 0:
                 datasets.append({"name": dataset, "chart_count": chart_count})
@@ -767,23 +838,14 @@ def get_topic_words(dataset: str, model: str = "theta", current_user: User = Dep
     if not result_path:
         raise HTTPException(status_code=404, detail="Training result not found")
     topics: Any = None
-    for entry in storage.list_objects(f"{result_path}/model/"):
-        if "topic_words" in entry.key.lower() and entry.key.endswith(".json"):
-            topics = storage.get_object_json(entry.key)
-            if entry.key.endswith("/topic_words.json"):
-                break
+    topic_key = find_result_file(result_path, "topic_words.json")
+    if topic_key:
+        topics = storage.get_object_json(topic_key)
     if topics is None:
-        csv_key = f"{result_path}/visualization/zh/global/主题表.csv"
-        try:
+        csv_key = find_result_file(result_path, "主题表.csv")
+        if csv_key:
             content = storage.get_object_text(csv_key, "utf-8-sig")
-            parsed: dict[str, Any] = {}
-            for row in csv.DictReader(io.StringIO(content)):
-                topic_id = str(int(row.get("topic_id", "1")) - 1)
-                keywords = [kw.strip() for kw in row.get("keywords", "").split(",") if kw.strip()]
-                parsed[topic_id] = [[kw, 1.0] for kw in keywords[:10]]
-            topics = parsed
-        except Exception:
-            pass
+            topics = parse_topic_table(content)
     if topics is None:
         raise HTTPException(status_code=404, detail="Topic words not found")
     if isinstance(topics, list):
@@ -796,7 +858,24 @@ def get_metrics(dataset: str, model: str = "theta", current_user: User = Depends
     result_path = result_path_key(current_user.username, dataset, model)
     if not result_path:
         raise HTTPException(status_code=404, detail="Training result not found")
-    metrics = storage.get_object_json(f"{result_path}/evaluation/metrics.json")
+    metrics_key = None
+    for candidate in [
+        f"{result_path}/evaluation/metrics.json",
+        f"{result_path}/metrics_zero_shot.json",
+        f"{result_path}/metrics.json",
+    ]:
+        if storage.object_exists(candidate):
+            metrics_key = candidate
+            break
+    if not metrics_key:
+        for entry in result_objects(result_path):
+            name = entry.key.rsplit("/", 1)[-1].lower()
+            if name.startswith("metrics") and name.endswith(".json"):
+                metrics_key = entry.key
+                break
+    if not metrics_key:
+        raise HTTPException(status_code=404, detail="Metrics not found")
+    metrics = storage.get_object_json(metrics_key)
     return MetricsResponse(dataset=dataset, model=model, metrics=metrics)
 
 
@@ -805,15 +884,14 @@ def get_visualizations(dataset: str, model: str = "theta", current_user: User = 
     result_path = result_path_key(current_user.username, dataset, model)
     if not result_path:
         raise HTTPException(status_code=404, detail="Training result not found")
-    base_prefix = f"{result_path}/visualization/"
     global_files: list[VisualizationFile] = []
     topic_files: dict[str, list[VisualizationFile]] = {}
-    for entry in storage.list_objects(base_prefix):
+    for entry in result_objects(result_path):
         if entry.is_prefix or entry.key.endswith("/"):
             continue
-        relative = entry.key[len(base_prefix):]
-        if relative.startswith("zh/"):
-            relative = relative[3:]
+        if not is_visualization_key(entry.key):
+            continue
+        relative = normalized_visualization_path(result_relative_path(entry.key, result_path))
         if relative.startswith("global/"):
             filename = relative.split("/")[-1]
             global_files.append(
@@ -851,10 +929,18 @@ def visualization_object_key(username: str, dataset: str, model: str, path: str)
     result_path = result_path_key(username, dataset, model)
     if not result_path:
         raise HTTPException(status_code=404, detail="Training result not found")
-    clean_path = unquote(path)
-    for candidate in [f"{result_path}/visualization/zh/{clean_path}", f"{result_path}/visualization/{clean_path}"]:
+    clean_path = unquote(path).replace("\\", "/").lstrip("/")
+    for candidate in [
+        f"{result_path}/visualization/zh/{clean_path}",
+        f"{result_path}/visualization/{clean_path}",
+        f"{result_path}/zh/zero_shot/{clean_path}",
+        f"{result_path}/zh/{clean_path}",
+    ]:
         if storage.object_exists(candidate):
             return candidate
+    for entry in result_objects(result_path):
+        if normalized_visualization_path(result_relative_path(entry.key, result_path)).endswith(clean_path):
+            return entry.key
     raise HTTPException(status_code=404, detail="Visualization file not found")
 
 
