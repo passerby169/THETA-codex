@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import type { CSSProperties, DragEventHandler, MouseEventHandler } from "react"
 import { createPortal } from "react-dom"
 import { apiFetch, API_BASE } from "@/lib/api/config"
 import { Loader2, AlertCircle, Download, ChevronDown, ChevronUp, X, ZoomIn, ZoomOut, Send, Maximize2, RotateCcw } from "lucide-react"
@@ -118,6 +119,100 @@ function CsvPreview({ dataset, path }: { dataset: string; path: string }) {
         <p className="text-xs text-slate-400 text-center py-2">只显示前 100 行</p>
       )}
     </div>
+  )
+}
+
+function AuthenticatedImage({
+  dataset,
+  model,
+  path,
+  name,
+  className,
+  style,
+  loading = "lazy",
+  draggable,
+  onClick,
+  onDoubleClick,
+  onDragStart,
+}: {
+  dataset: string
+  model: string
+  path: string
+  name: string
+  className?: string
+  style?: CSSProperties
+  loading?: "lazy" | "eager"
+  draggable?: boolean
+  onClick?: MouseEventHandler<HTMLImageElement>
+  onDoubleClick?: MouseEventHandler<HTMLImageElement>
+  onDragStart?: DragEventHandler<HTMLImageElement>
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let nextObjectUrl: string | null = null
+    const token = localStorage.getItem("access_token")
+
+    setObjectUrl(null)
+    setError(false)
+
+    fetch(
+      `${API_BASE}/api/results/${encodeURIComponent(dataset)}/visualizations/file?model=${encodeURIComponent(model)}&path=${encodeURIComponent(path)}`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch image")
+        return res.blob()
+      })
+      .then((blob) => {
+        if (cancelled) return
+        nextObjectUrl = URL.createObjectURL(blob)
+        setObjectUrl(nextObjectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+
+    return () => {
+      cancelled = true
+      if (nextObjectUrl) URL.revokeObjectURL(nextObjectUrl)
+    }
+  }, [dataset, model, path])
+
+  if (error) {
+    return (
+      <div className="flex h-full min-h-[120px] w-full flex-col items-center justify-center gap-2 text-xs text-slate-400">
+        <AlertCircle className="h-5 w-5" />
+        <span>图片加载失败</span>
+      </div>
+    )
+  }
+
+  if (!objectUrl) {
+    return (
+      <div className="flex h-full min-h-[120px] w-full items-center justify-center gap-2 text-xs text-slate-400">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>加载图片...</span>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={objectUrl}
+      alt={name}
+      className={className}
+      style={style}
+      loading={loading}
+      draggable={draggable}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+      onDragStart={onDragStart}
+    />
   )
 }
 
@@ -285,15 +380,39 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
     })
   }
 
-  const downloadFile = (file: VisualizationFile) => {
+  const fetchFileBlob = async (path: string) => {
+    const token = localStorage.getItem("access_token")
+    const response = await fetch(getProxyUrl(path), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) {
+      throw new Error("Failed to fetch file")
+    }
+    return response.blob()
+  }
+
+  const downloadFile = async (file: VisualizationFile) => {
+    const blob = await fetchFileBlob(file.path)
+    const objectUrl = URL.createObjectURL(blob)
     const anchor = document.createElement("a")
-    anchor.href = file.url
+    anchor.href = objectUrl
     anchor.download = file.name
-    anchor.target = "_blank"
-    anchor.rel = "noopener"
     document.body.appendChild(anchor)
     anchor.click()
     document.body.removeChild(anchor)
+    URL.revokeObjectURL(objectUrl)
+  }
+
+  const openImageFullscreen = async (image: { path: string; name: string }) => {
+    const blob = await fetchFileBlob(image.path)
+    const objectUrl = URL.createObjectURL(blob)
+    const win = window.open("")
+    if (win) {
+      win.document.write(`<html><head><title>${image.name}</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#000}img{max-width:100%;max-height:100%}#close{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 20px;background:#333;color:#fff;border:none;border-radius:5px;cursor:pointer}</style></head><body><img src="${objectUrl}" alt="${image.name}" /><button onclick="window.close()" id="close">关闭</button></body></html>`)
+      win.addEventListener("beforeunload", () => URL.revokeObjectURL(objectUrl), { once: true })
+    } else {
+      URL.revokeObjectURL(objectUrl)
+    }
   }
 
   const downloadSelected = () => {
@@ -348,12 +467,6 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
     }
     return response.text()
   }, [dataset])
-
-  // 直接获取文件 URL（用于下载）
-  const getFileUrl = (path: string): string => {
-    const file = findFileByPath(path)
-    return file?.url || ""
-  }
 
   // 获取代理预览 URL（用于 HTML 和 CSV 预览）
   const getProxyUrl = (path: string): string => {
@@ -518,9 +631,11 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                   }}
                   onClick={() => setEnlargedImage({ url: file.url, name: file.name, path: file.path, dataset: vizData.dataset })}
                 >
-                  <img
-                    src={file.url}
-                    alt={file.name}
+                  <AuthenticatedImage
+                    dataset={vizData.dataset}
+                    model={selectedModel || "theta"}
+                    path={file.path}
+                    name={file.name}
                     className="w-full h-full object-contain"
                     loading="lazy"
                   />
@@ -703,13 +818,8 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                const anchor = document.createElement("a")
-                anchor.href = enlargedImage.url
-                anchor.download = enlargedImage.name
-                anchor.target = "_blank"
-                document.body.appendChild(anchor)
-                anchor.click()
-                document.body.removeChild(anchor)
+                const file = findFileByPath(enlargedImage.path)
+                if (file) void downloadFile(file)
               }}
               className="p-2 text-white hover:bg-white/20 rounded-full transition-colors"
               title="下载图片"
@@ -720,16 +830,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (enlargedImage) {
-                  const img = new Image()
-                  img.src = enlargedImage.url
-                  img.onload = () => {
-                    const win = window.open("")
-                    if (win) {
-                      win.document.write(`<html><head><title>${enlargedImage.name}</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#000}img{max-width:100%;max-height:100%}#close{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 20px;background:#333;color:#fff;border:none;border-radius:5px;cursor:pointer}</style></head><body><img src="${enlargedImage.url}" alt="${enlargedImage.name}" /><button onclick="window.close()" id="close">关闭</button></body></html>`)
-                    }
-                  }
-                }
+                void openImageFullscreen(enlargedImage)
               }}
               className="p-2 text-white hover:bg-white/20 rounded-full transition-colors"
               title="全屏查看"
@@ -793,10 +894,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
             onMouseLeave={() => setIsDragging(false)}
             onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={enlargedImage.url}
-              alt={enlargedImage.name}
+            <AuthenticatedImage
+              dataset={enlargedImage.dataset}
+              model={selectedModel || "theta"}
+              path={enlargedImage.path}
+              name={enlargedImage.name}
               className="object-contain select-none max-w-[90vw] max-h-[90vh]"
+              loading="eager"
               style={{
                 transform: zoomLevel !== 1 ? `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})` : undefined,
                 transformOrigin: "center center",
@@ -900,9 +1004,11 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                                 <CsvPreview dataset={dataset} path={file.path} />
                               ) : (
                                 <>
-                                  <img
-                                    src={file.url}
-                                    alt={file.name}
+                                  <AuthenticatedImage
+                                    dataset={vizData.dataset}
+                                    model={selectedModel || "theta"}
+                                    path={file.path}
+                                    name={file.name}
                                     className="w-full h-full object-contain cursor-zoom-in"
                                     loading="lazy"
                                     onClick={() => setEnlargedImage({ url: file.url, name: file.name, path: file.path, dataset: vizData.dataset })}
