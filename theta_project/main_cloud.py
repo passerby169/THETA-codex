@@ -24,7 +24,7 @@ from starlette.responses import Response
 from app.database import Base, ChatMessage, File, SessionLocal, TrainingJob, User, engine, get_db
 from services.gpu_provider import submit_training_job
 from utils import object_storage as storage
-from utils.prompts import AI_CHAT_SYSTEM_PROMPT, DASHSCOPE_MODEL
+from utils.prompts import AI_CHAT_SYSTEM_PROMPT, DASHSCOPE_MODEL, build_chart_analysis_messages
 
 load_dotenv()
 
@@ -1102,19 +1102,17 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
     media_type = mimetypes.guess_type(key)[0] or ("image/jpeg" if ext in {"jpg", "jpeg"} else f"image/{ext}")
     image_data_url = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
 
-    prompt_language = "中文" if language.startswith("zh") else "English"
-    prompt = (
-        f"请只用{prompt_language}解读这张 THETA 主题模型分析图表。"
-        f"图表名称：{chart_name}。分析类型：{analysis_type}。"
-        "要求：1）先说明图表展示的核心信息；2）指出最值得关注的趋势、差异或异常；"
-        "3）给出对研究者有用的结论。控制在 120 字以内，避免编造图中不存在的数据。"
-        "不要输出推理过程，不要输出英文，不要输出 <think> 标签。"
-    )
-
     api_base = os.getenv("VISION_API_BASE", "https://api.minimaxi.com/v1").rstrip("/")
     vision_model = os.getenv("VISION_MODEL", "MiniMax-M3")
     max_tokens = int(os.getenv("VISION_MAX_TOKENS", "400"))
     detail = os.getenv("VISION_IMAGE_DETAIL", "low")
+    messages = build_chart_analysis_messages(
+        chart_name=chart_name,
+        analysis_type=analysis_type,
+        language=language,
+        image_data_url=image_data_url,
+        image_detail=detail,
+    )
 
     try:
         response = requests.post(
@@ -1125,19 +1123,7 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
             },
             json={
                 "model": vision_model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "你是科研图表解读助手。只输出最终中文解读，不输出推理过程或 <think> 标签。",
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": image_data_url, "detail": detail}},
-                        ],
-                    },
-                ],
+                "messages": messages,
                 "temperature": 0.2,
                 "max_tokens": max_tokens,
             },

@@ -36,3 +36,86 @@ AI_CHAT_SYSTEM_PROMPT_MULTI = """
 """
 
 DASHSCOPE_VL_MODEL = "qwen-vl-plus"
+
+
+# Chart vision interpretation prompts
+# Few-shot examples can be added here later without changing the API route.
+CHART_ANALYSIS_SYSTEM_PROMPT = (
+    "你是科研图表解读助手，专门解读 THETA 主题模型输出的图表。"
+    "只输出最终中文解读，不输出推理过程，不输出 <think> 标签，不输出英文分析。"
+)
+
+CHART_ANALYSIS_PROMPT_TEMPLATE = (
+    "请只用{language}解读这张 THETA 主题模型分析图表。\n"
+    "图表名称：{chart_name}\n"
+    "分析类型：{analysis_type}\n\n"
+    "输出要求：\n"
+    "1. 先说明图表展示的核心信息；\n"
+    "2. 指出最值得关注的趋势、差异或异常；\n"
+    "3. 给出对研究者有用的结论；\n"
+    "4. 控制在 120 字以内；\n"
+    "5. 避免编造图中不存在的数据；\n"
+    "6. 不要输出推理过程，不要输出 <think> 标签。"
+)
+
+CHART_ANALYSIS_FEW_SHOT_EXAMPLES: list[dict] = [
+    # Example format for future expansion:
+    # {
+    #     "chart_name": "主题占比分布.png",
+    #     "chart_description": "饼图显示各主题在语料中的占比。",
+    #     "analysis": "该图展示了主题分布并不均衡，少数主题占据主要比例。建议优先解读高占比主题，并检查低占比主题是否为噪声或细分议题。"
+    # }
+]
+
+
+def build_chart_analysis_messages(
+    *,
+    chart_name: str,
+    analysis_type: str,
+    language: str,
+    image_data_url: str,
+    image_detail: str = "low",
+    few_shot_examples: list[dict] | None = None,
+) -> list[dict]:
+    """Build OpenAI-compatible multimodal messages for chart interpretation."""
+    output_language = "中文" if language.startswith("zh") else "English"
+    examples = few_shot_examples if few_shot_examples is not None else CHART_ANALYSIS_FEW_SHOT_EXAMPLES
+
+    messages: list[dict] = [
+        {"role": "system", "content": CHART_ANALYSIS_SYSTEM_PROMPT},
+    ]
+
+    for example in examples:
+        example_chart_name = example.get("chart_name", "示例图表")
+        example_description = example.get("chart_description", "")
+        example_user_text = (
+            f"请解读这张示例 THETA 图表。\n"
+            f"图表名称：{example_chart_name}\n"
+            f"图表说明：{example_description}"
+        )
+        example_content: list[dict] = [{"type": "text", "text": example_user_text}]
+        if example.get("image_url"):
+            example_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": example["image_url"], "detail": image_detail},
+                }
+            )
+        messages.append({"role": "user", "content": example_content})
+        messages.append({"role": "assistant", "content": example.get("analysis", "")})
+
+    prompt = CHART_ANALYSIS_PROMPT_TEMPLATE.format(
+        language=output_language,
+        chart_name=chart_name,
+        analysis_type=analysis_type,
+    )
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_data_url, "detail": image_detail}},
+            ],
+        }
+    )
+    return messages
