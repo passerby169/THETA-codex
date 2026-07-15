@@ -1,6 +1,9 @@
 import csv
 import io
 import os
+import base64
+import mimetypes
+import json
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -13,6 +16,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
+import requests
 from sqlalchemy.orm import Session
 from starlette.responses import Response
 
@@ -1045,5 +1049,114 @@ def interpret_placeholder(payload: Dict[str, Any], current_user: User = Depends(
 
 
 @app.post("/api/vision/analyze-chart")
-def analyze_chart_placeholder(payload: Dict[str, Any], current_user: User = Depends(get_current_user)):
-    return {"success": True, "message": "Chart analysis is not configured", "data": {"analysis": None}}
+def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_current_user)):
+    provider = os.getenv("VISION_PROVIDER", "minimax").lower()
+    if provider != "minimax":
+        raise HTTPException(status_code=400, detail=f"Unsupported vision provider: {provider}")
+
+    api_key = os.getenv("VISION_API_KEY") or os.getenv("MINIMAX_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="VISION_API_KEY or MINIMAX_API_KEY is not configured")
+
+    dataset = payload.get("dataset")
+    model = payload.get("model") or payload.get("model_name") or "theta"
+    chart_path = payload.get("chart_path") or payload.get("path")
+    chart_name = payload.get("chart_name") or chart_path or "chart"
+    analysis_type = payload.get("analysis_type", "general")
+    language = payload.get("language", "zh")
+
+    if not dataset or not chart_path:
+        raise HTTPException(status_code=400, detail="dataset and chart_path are required")
+
+    key = visualization_object_key(current_user.username, dataset, model, chart_path)
+    ext = key.rsplit(".", 1)[-1].lower()
+    if ext not in {"png", "jpg", "jpeg", "webp", "gif"}:
+        raise HTTPException(status_code=400, detail="Only image chart files can be analyzed")
+
+    clean_path = unquote(chart_path).replace("\\", "/").lstrip("/")
+    cache_key = f"{result_path_key(current_user.username, dataset, model)}/analysis/{clean_path}.json"
+    try:
+        cached = storage.get_object_json(cache_key)
+        analysis = cached.get("analysis")
+        if analysis:
+            return {"success": True, "message": "Chart analysis loaded from cache", "data": {"analysis": analysis}}
+    except Exception:
+        pass
+
+    image_bytes = storage.get_object_bytes(key)
+    if len(image_bytes) > int(os.getenv("VISION_MAX_IMAGE_BYTES", str(10 * 1024 * 1024))):
+        raise HTTPException(status_code=413, detail="Chart image is too large for vision analysis")
+
+    media_type = mimetypes.guess_type(key)[0] or ("image/jpeg" if ext in {"jpg", "jpeg"} else f"image/{ext}")
+    image_data_url = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+
+    prompt_language = "中文" if language.startswith("zh") else "English"
+    prompt = (
+        f"请用{prompt_language}解读这张 THETA 主题模型分析图表。"
+        f"图表名称：{chart_name}。分析类型：{analysis_type}。"
+        "要求：1）先说明图表展示的核心信息；2）指出最值得关注的趋势、差异或异常；"
+        "3）给出对研究者有用的结论。控制在 120 字以内，避免编造图中不存在的数据。"
+    )
+
+    api_base = os.getenv("VISION_API_BASE", "https://api.minimaxi.com/v1").rstrip("/")
+    vision_model = os.getenv("VISION_MODEL", "MiniMax-M3")
+    max_tokens = int(os.getenv("VISION_MAX_TOKENS", "400"))
+    detail = os.getenv("VISION_IMAGE_DETAIL", "low")
+
+    try:
+        response = requests.post(
+            f"{api_base}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": vision_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a concise research assistant for interpreting topic-model charts.",
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": image_data_url, "detail": detail}},
+                        ],
+                    },
+                ],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+            },
+            timeout=int(os.getenv("VISION_REQUEST_TIMEOUT", "60")),
+        )
+        response.raise_for_status()
+        result = response.json()
+        analysis = (
+            result.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+    except requests.HTTPError as exc:
+        detail_text = exc.response.text[:500] if exc.response is not None else str(exc)
+        raise HTTPException(status_code=502, detail=f"MiniMax vision request failed: {detail_text}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MiniMax vision request failed: {exc}") from exc
+
+    if not analysis:
+        raise HTTPException(status_code=502, detail="MiniMax vision response did not contain analysis text")
+
+    try:
+        storage.put_object_bytes(
+            cache_key,
+            body=json.dumps(
+                {"analysis": analysis, "provider": "minimax", "model": vision_model},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            content_type="application/json",
+        )
+    except Exception:
+        pass
+
+    return {"success": True, "message": "Chart analysis generated", "data": {"analysis": analysis}}

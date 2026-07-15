@@ -848,10 +848,26 @@ export const ETMAgentAPI = {
     });
   },
 
-  async analyzeChart(jobId: string, chartName: string, analysisType = 'general', language = 'zh', dataset?: string, chartUrl?: string): Promise<any> {
+  async analyzeChart(
+    jobId: string,
+    chartName: string,
+    analysisType = 'general',
+    language = 'zh',
+    dataset?: string,
+    chartPath?: string,
+    model?: string,
+  ): Promise<any> {
     return apiFetch(AGENT_BASE, '/api/vision/analyze-chart', {
       method: 'POST',
-      body: JSON.stringify({ job_id: jobId, chart_name: chartName, analysis_type: analysisType, language, dataset, chart_url: chartUrl }),
+      body: JSON.stringify({
+        job_id: jobId,
+        chart_name: chartName,
+        analysis_type: analysisType,
+        language,
+        dataset,
+        chart_path: chartPath,
+        model,
+      }),
     });
   },
 

@@ -268,7 +268,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
         }
       })
 
-      ETMAgentAPI.analyzeChart('', file.name, 'general', 'zh', vizData.dataset, file.url)
+      ETMAgentAPI.analyzeChart('', file.name, 'general', 'zh', vizData.dataset, file.path, selectedModel || "theta")
         .then(result => {
           // 如果后端返回了分析内容（不管 success 是否 true），都显示出来
           const analysis = result.data?.analysis || result.analysis || '无法生成解读'
@@ -307,7 +307,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
           }
         })
 
-        ETMAgentAPI.analyzeChart('', file.name, 'general', 'zh', vizData.dataset, file.url)
+        ETMAgentAPI.analyzeChart('', file.name, 'general', 'zh', vizData.dataset, file.path, selectedModel || "theta")
           .then(result => {
             // 如果后端返回了分析内容（不管 success 是否 true），都显示出来
             const analysis = result.data?.analysis || result.analysis || '无法生成解读'
@@ -331,7 +331,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
           })
       })
     })
-  }, [vizData, setAiInterpretations])
+  }, [vizData, selectedModel, setAiInterpretations])
 
   const toggleFileSelection = (filePath: string) => {
     setSelectedFiles((prev) => {
