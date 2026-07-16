@@ -765,12 +765,16 @@ function DashboardContent() {
           current_project: activeTabId !== "hub" ? projects.find(p => p.id === activeTabId) : null,
         }, images, files)) {
           streamed = true
-          if (chunk.type === "text" && chunk.content) {
-            fullText = chunk.content
+          if ((chunk.type === "content" || chunk.type === "text" || chunk.type === "message") && chunk.content) {
+            fullText += chunk.content
             setChatHistory((prev) =>
               prev.map((m) => (m.id === aiMsgId ? { ...m, content: fullText, isThinking: false, shouldAnimateTyping: true } : m))
             )
           }
+        }
+        if (!fullText.trim()) {
+          streamed = false
+          throw new Error("SSE returned no chat content")
         }
       } catch {
         // SSE 不可用，fallback 到普通对话

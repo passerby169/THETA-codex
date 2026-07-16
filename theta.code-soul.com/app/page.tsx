@@ -409,6 +409,24 @@ export default function LandingPage() {
           )
         }
       }
+      if (!fullText.trim()) {
+        const response = await ETMAgentAPI.chat(content.trim(), {
+          current_page: "landing",
+          current_view_name: "首页",
+          current_view: "landing",
+          app_state: "idle",
+          datasets_count: 0,
+          datasets: [],
+        }, { sessionId: "landing-session" })
+        const text = response.message ?? (response as { response?: string }).response ?? "暂时无法连接 AI 服务，请稍后再试。"
+        setChatHistory((prev) =>
+          prev.map(msg =>
+            msg.id === aiMessageId
+              ? { ...msg, content: text }
+              : msg
+          )
+        )
+      }
     } catch {
       // 流式失败，回退到完整请求
       try {

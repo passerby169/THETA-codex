@@ -804,7 +804,15 @@ export const ETMAgentAPI = {
           const data = line.slice(6).trim();
           if (data === '[DONE]') return;
           try {
-            yield JSON.parse(data);
+            const parsed = JSON.parse(data) as {
+              type?: string;
+              content?: string;
+              message?: string;
+              response?: string;
+            };
+            const content = parsed.content ?? parsed.message ?? parsed.response ?? '';
+            const type = parsed.type === 'message' ? 'content' : (parsed.type ?? (content ? 'content' : 'message'));
+            yield { ...parsed, type, content };
           } catch { /* skip malformed chunks */ }
         }
       }

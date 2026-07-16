@@ -1110,7 +1110,7 @@ def chat_stream(request: ChatRequest, current_user: User = Depends(get_current_u
     result = chat(request, current_user, db)
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'message', 'content': result['message']}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'content', 'content': result['message']}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
