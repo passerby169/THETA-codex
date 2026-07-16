@@ -19,7 +19,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 import requests
 from sqlalchemy.orm import Session
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from app.database import Base, ChatMessage, File, SessionLocal, TrainingJob, User, engine, get_db
 from services.gpu_provider import submit_training_job
@@ -971,44 +971,149 @@ def get_visualization_image(dataset: str, path: str, model: str = "theta", curre
 
 @app.delete("/api/datasets/{dataset}")
 def delete_dataset(dataset: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    storage.delete_prefix(f"raw_data/{current_user.username}/{dataset}/")
-    storage.delete_prefix(f"results/{current_user.username}/{dataset}/")
     files = db.query(File).filter(
         File.owner_id == current_user.id,
         File.file_path.like(f"raw_data/{current_user.username}/{dataset}/%"),
     ).all()
+    file_ids = [file.id for file in files]
+    deleted_jobs = 0
+    if file_ids:
+        jobs = db.query(TrainingJob).filter(
+            TrainingJob.user_id == current_user.id,
+            TrainingJob.file_id.in_(file_ids),
+        ).all()
+        deleted_jobs = len(jobs)
+        for job in jobs:
+            db.delete(job)
+
+    storage.delete_prefix(f"raw_data/{current_user.username}/{dataset}/")
+    storage.delete_prefix(f"results/{current_user.username}/{dataset}/")
     for file in files:
         db.delete(file)
     db.commit()
-    return {"success": True, "message": f"Dataset {dataset} deleted"}
+    return {
+        "success": True,
+        "message": f"Dataset {dataset} deleted",
+        "deleted_files": len(files),
+        "deleted_training_jobs": deleted_jobs,
+    }
+
+
+def _strip_thinking_tags(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
+
+
+def _chat_with_openai_compatible(request: ChatRequest) -> Optional[str]:
+    api_key = (
+        os.getenv("CHAT_API_KEY")
+        or os.getenv("MINIMAX_API_KEY")
+        or os.getenv("VISION_API_KEY")
+        or os.getenv("EMBEDDING_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+    if not api_key:
+        return None
+
+    api_base = (
+        os.getenv("CHAT_API_BASE")
+        or os.getenv("MINIMAX_API_BASE")
+        or os.getenv("VISION_API_BASE")
+        or os.getenv("EMBEDDING_API_BASE")
+        or "https://api.minimaxi.com/v1"
+    ).rstrip("/")
+    model = (
+        os.getenv("CHAT_MODEL")
+        or os.getenv("MINIMAX_TEXT_MODEL")
+        or os.getenv("VISION_MODEL")
+        or os.getenv("EMBEDDING_MODEL")
+        or "MiniMax-M1"
+    )
+    messages = [
+        {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
+        {"role": "user", "content": request.message},
+    ]
+    if request.context:
+        messages.insert(1, {"role": "system", "content": f"当前页面上下文：{json.dumps(request.context, ensure_ascii=False)}"})
+
+    response = requests.post(
+        f"{api_base}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": float(os.getenv("CHAT_TEMPERATURE", "0.4")),
+            "max_tokens": int(os.getenv("CHAT_MAX_TOKENS", "800")),
+        },
+        timeout=int(os.getenv("CHAT_TIMEOUT_SECONDS", "45")),
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"chat request failed ({response.status_code}): {response.text[:500]}")
+
+    data = response.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content")
+    if isinstance(content, list):
+        content = "".join(str(item.get("text", item)) if isinstance(item, dict) else str(item) for item in content)
+    return _strip_thinking_tags(str(content or ""))
+
+
+def _chat_with_dashscope(request: ChatRequest) -> Optional[str]:
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        return None
+    import dashscope
+
+    dashscope.api_key = api_key
+    response = dashscope.Generation.call(
+        model=DASHSCOPE_MODEL,
+        messages=[
+            {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": request.message},
+        ],
+    )
+    if response.status_code == 200:
+        return response.output.get("text")
+    raise RuntimeError(f"DashScope request failed ({response.status_code})")
+
+
+def _generate_chat_answer(request: ChatRequest) -> str:
+    if os.getenv("CHAT_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("VISION_API_KEY"):
+        try:
+            answer = _chat_with_openai_compatible(request)
+            if answer:
+                return answer
+        except Exception as exc:
+            return f"AI 请求失败：{exc}"
+
+    try:
+        answer = _chat_with_dashscope(request)
+        if answer:
+            return answer
+    except Exception as exc:
+        return f"AI 请求失败：{exc}"
+
+    return "AI 聊天未配置：请设置 CHAT_API_KEY、MINIMAX_API_KEY 或 DASHSCOPE_API_KEY。"
 
 
 @app.post("/api/agent/chat")
 @app.post("/api/chat")
 def chat(request: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    answer = "AI analysis is not configured. Set DASHSCOPE_API_KEY to enable model-backed chat."
-    api_key = os.getenv("DASHSCOPE_API_KEY")
-    if api_key:
-        try:
-            import dashscope
-
-            dashscope.api_key = api_key
-            response = dashscope.Generation.call(
-                model=DASHSCOPE_MODEL,
-                messages=[
-                    {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
-                    {"role": "user", "content": request.message},
-                ],
-            )
-            if response.status_code == 200:
-                answer = response.output.get("text") or answer
-        except Exception as exc:
-            answer = f"AI request failed: {exc}"
+    answer = _generate_chat_answer(request)
     session_id = request.session_id or "default"
     db.add(ChatMessage(user_id=current_user.id, session_id=session_id, role="user", content=request.message, created_at=datetime.utcnow()))
     db.add(ChatMessage(user_id=current_user.id, session_id=session_id, role="ai", content=answer, created_at=datetime.utcnow()))
     db.commit()
     return {"message": answer, "session_id": session_id, "created_at": datetime.utcnow().isoformat()}
+
+
+@app.post("/api/agent/chat/stream")
+def chat_stream(request: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    result = chat(request, current_user, db)
+
+    def event_stream():
+        yield f"data: {json.dumps({'type': 'message', 'content': result['message']}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/chat/history/{session_id}")

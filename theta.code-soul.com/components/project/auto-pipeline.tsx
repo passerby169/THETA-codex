@@ -160,19 +160,32 @@ export function AutoPipeline({
   const columnPanelShown = useRef(false)
   /** 当前流程使用的数据集名（上传后由后端返回），用于结果展示 */
   const pipelineDatasetRef = useRef<string>("")
-  /** 避免 DLC 轮询重复刷同一条日志 */
+  /** 避免外部训练轮询重复刷同一条日志 */
   const lastPollLogRef = useRef<string>("")
-  /** 避免重复打印 DLC 启动提示 */
+  /** 避免重复打印外部训练启动提示 */
   const lastDlcMessageRef = useRef<boolean>(false)
-  /** DLC 云端训练倒计时模拟 */
+  /** 外部训练已用时 */
   const [isDlcActive, setIsDlcActive] = useState(false)
   const [dlcRemainingSeconds, setDlcRemainingSeconds] = useState(0)
-  const dlcEstimatedTotal = useRef(480) // 默认预估 8 分钟 = 480 秒
   const dlcCountdownRef = useRef<NodeJS.Timeout | null>(null)
   /** 上传是否正在进行中（用于参数面板提前弹出时等待上传完成） */
   const uploadInProgressRef = useRef(false)
   /** 用户在参数面板确认的配置（上传未完成时暂存，等待上传完成后启动流水线） */
   const pendingConfigRef = useRef<{ config: AnalysisConfig; columnSelection: ColumnSelection | null } | null>(null)
+
+  const startExternalTrainingTimer = useCallback((startedAt?: Date | null, progress?: number) => {
+    clearInterval(dlcCountdownRef.current!)
+    const startedAtMs = startedAt?.getTime() || Date.now()
+    const tick = () => {
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+      setDlcRemainingSeconds(elapsedSeconds)
+      if (typeof progress === "number") {
+        setOverallProgress(Math.max(0, Math.min(99, Math.round(progress))))
+      }
+    }
+    tick()
+    dlcCountdownRef.current = setInterval(tick, 1000)
+  }, [])
   /** 用于在 handleConfigConfirm 中访问最新 selectedFiles（避免闭包陈旧） */
   const selectedFilesRef = useRef<File[]>([])
   /** 配置/上传错误提示 */
@@ -188,7 +201,7 @@ export function AutoPipeline({
     setConfigError(null)
   }, [selectedFiles])
 
-  /** 清理倒计时定时器 */
+  /** 清理训练计时器 */
   useEffect(() => {
     return () => {
       if (dlcCountdownRef.current) {
@@ -225,7 +238,7 @@ export function AutoPipeline({
     }
 
     // 如果 pipelineStatus 已经是 running，但没有 taskId（数据库标记状态）
-    // 直接进入 running 状态显示默认倒计时
+    // 直接进入 running 状态显示已用时。
     if (!initialTaskId && pipelineStatus === "running") {
       hasUploaded.current = true
       pipelineStarted.current = true
@@ -234,29 +247,15 @@ export function AutoPipeline({
       updateStep("preprocess", { status: "completed", progress: 100, message: "预处理完成" })
       updateStep("embedding", { status: "completed", progress: 100, message: "词嵌入完成" })
       updateStep("training", { status: "running", progress: 0, message: "云端训练中..." })
-      // 默认预估 6 分钟（当没有任务信息时使用）
-      const estimatedTotal = 360
-      dlcEstimatedTotal.current = estimatedTotal
-      // 从头开始倒计时
-      setDlcRemainingSeconds(estimatedTotal)
       setIsDlcActive(true)
       setOverallProgress(0)
-      addLog("ℹ️ DLC 云端训练已开始")
-      addLog("ℹ️ 根据数据集大小，预计总耗时 5-8 分钟")
+      const startedAt = new Date()
+      setStartTime(startedAt)
+      startExternalTrainingTimer(startedAt, 0)
+      addLog("ℹ️ 外部训练任务已开始")
       addLog("ℹ️ 训练过程中无需保持页面打开，可随时返回项目中心")
       addLog("ℹ️ 下次打开项目时会自动更新训练结果")
       lastDlcMessageRef.current = true
-
-      // 启动倒计时
-      clearInterval(dlcCountdownRef.current!)
-      const localStartTime = Date.now()
-      dlcCountdownRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - localStartTime) / 1000)
-        const remaining = Math.max(0, estimatedTotal - elapsed)
-        setDlcRemainingSeconds(remaining)
-        const progress = Math.min(100, Math.round(((estimatedTotal - remaining) / estimatedTotal) * 100))
-        setOverallProgress(progress)
-      }, 1000)
       return
     }
 
@@ -319,31 +318,8 @@ export function AutoPipeline({
             progress: task.progress || 0,
             message: task.message || "云端训练中...",
           })
-          // DLC 云端训练 → 显示倒计时画面
-          // 根据实际运行数据，预估总时间 5-8 分钟随机（300-480 秒）
-          const minSeconds = 300 // 5 分钟
-          const maxSeconds = 480 // 8 分钟
-          const estimatedTotal = Math.floor(Math.random() * (maxSeconds - minSeconds + 1)) + minSeconds
-          dlcEstimatedTotal.current = estimatedTotal
-
-          // 计算已过去的时间，得到正确剩余时间
-          const elapsedTotalSeconds = task.created_at ? Math.floor((Date.now() - new Date(task.created_at).getTime()) / 1000) : 0
-          const remainingSeconds = Math.max(0, estimatedTotal - elapsedTotalSeconds)
-
-          setDlcRemainingSeconds(remainingSeconds)
           setIsDlcActive(true)
-
-          // 启动倒计时，每秒更新一次进度
-          clearInterval(dlcCountdownRef.current!)
-          const localStartTime = Date.now()
-          dlcCountdownRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - localStartTime) / 1000)
-            const remaining = Math.max(0, remainingSeconds - elapsed)
-            setDlcRemainingSeconds(remaining)
-            // 更新进度条：已过时间 / 总时间
-            const progress = Math.min(100, Math.round(((estimatedTotal - remaining) / estimatedTotal) * 100))
-            setOverallProgress(progress)
-          }, 1000)
+          startExternalTrainingTimer(task.created_at ? new Date(task.created_at) : new Date(), task.progress || 0)
         }
         addLog(`恢复任务进度: ${task.message || task.status}`)
 
@@ -351,7 +327,7 @@ export function AutoPipeline({
       } catch (err) {
         console.error("Failed to restore task:", err)
         // 如果获取任务失败，但外部传入 pipelineStatus 已经是 running，
-        // 不要回退到上传界面，保持 running 状态显示倒计时
+        // 不要回退到上传界面，保持 running 状态显示已用时。
         if (pipelineStatus === "running") {
           setStatus("running")
           pipelineStarted.current = true
@@ -360,25 +336,12 @@ export function AutoPipeline({
           updateStep("preprocess", { status: "completed", progress: 100, message: "预处理完成" })
           updateStep("embedding", { status: "completed", progress: 100, message: "词嵌入完成" })
           updateStep("training", { status: "running", progress: 0, message: "云端训练中..." })
-          // 预估默认倒计时 5-8 分钟
-          const minSeconds = 300 // 5 分钟
-          const maxSeconds = 480 // 8 分钟
-          const estimatedTotal = Math.floor(Math.random() * (maxSeconds - minSeconds + 1)) + minSeconds
-          dlcEstimatedTotal.current = estimatedTotal
-          setDlcRemainingSeconds(estimatedTotal)
           setIsDlcActive(true)
           setOverallProgress(0)
-          // 启动倒计时
-          clearInterval(dlcCountdownRef.current!)
-          const localStartTime = Date.now()
-          dlcCountdownRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - localStartTime) / 1000)
-            const remaining = Math.max(0, estimatedTotal - elapsed)
-            setDlcRemainingSeconds(remaining)
-            const progress = Math.min(100, Math.round(((estimatedTotal - remaining) / estimatedTotal) * 100))
-            setOverallProgress(progress)
-          }, 1000)
-          addLog("⚠️ 无法获取任务详情，显示默认云端训练倒计时")
+          const startedAt = new Date()
+          setStartTime(startedAt)
+          startExternalTrainingTimer(startedAt, 0)
+          addLog("⚠️ 无法获取任务详情，已保持外部训练等待状态")
           // 继续轮询检测状态
           pollingRef.current = setInterval(() => pollTaskStatus(initialTaskId), 2000)
         } else {
@@ -695,8 +658,8 @@ export function AutoPipeline({
           return newSteps
         })
 
-        /** 总进度：DLC 训练模式，云端训练耗时较长，改为异步 */
-        // 如果任务还在运行中（没有完成/失败），就认为是 DLC 云端训练，显示倒计时
+        /** 总进度：外部训练模式，训练耗时较长，改为异步 */
+        // 如果任务还在运行中（没有完成/失败），显示外部训练等待状态。
         const isDlcStep =
           task.status === 'running' ||
           task.current_step === 'dlc_training' ||
@@ -705,48 +668,23 @@ export function AutoPipeline({
           (task.current_step === 'training' && task.dlc_status === 'running') ||
           (task.current_step === 'training' && task.is_dlc);
         if (isDlcStep) {
-          // DLC 云端训练耗时较长（小数据集约 30-60 分钟，大数据集可能数小时）
-          // 不需要持续轮询，提示用户后自动返回项目列表
           if (!lastDlcMessageRef.current) {
-            addLog("ℹ️ DLC 云端训练已开始")
-            addLog("ℹ️ 根据数据集大小，预计总耗时 5-8 分钟")
+            addLog("ℹ️ 外部训练任务已开始")
             addLog("ℹ️ 训练过程中无需保持页面打开，可随时返回项目中心")
             addLog("ℹ️ 下次打开项目时会自动更新训练结果")
             lastDlcMessageRef.current = true
           }
 
-          // 停止API轮询，启动本地倒计时模拟进度
-          // 即使已经添加过日志，每次恢复任务都需要重新启动倒计时
+          // 保留状态轮询，只用本地计时器展示真实已用时。
           clearInterval(pollingRef.current!)
           clearInterval(dlcCountdownRef.current!)
           pollingRef.current = null
           dlcCountdownRef.current = null
-
-          // 根据实际运行数据，预估总时间 5-8 分钟随机（300-480 秒）
-          const minSeconds = 300 // 5 分钟
-          const maxSeconds = 480 // 8 分钟
-          const estimatedTotal = Math.floor(Math.random() * (maxSeconds - minSeconds + 1)) + minSeconds
-          dlcEstimatedTotal.current = estimatedTotal
-
-          // 计算已过去的时间，得到正确剩余时间
-          // startTime 是任务创建时间，单位毫秒
-          const elapsedTotalSeconds = startTime ? Math.floor((Date.now() - startTime.getTime()) / 1000) : 0
-          const remainingSeconds = Math.max(0, estimatedTotal - elapsedTotalSeconds)
-
-          // 先设置，保证后面判断能拿到正确的值
-          setDlcRemainingSeconds(remainingSeconds)
           setIsDlcActive(true)
-
-          // 启动倒计时，每秒更新一次进度
-          const localStartTime = Date.now()
-          dlcCountdownRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - localStartTime) / 1000)
-            const remaining = Math.max(0, remainingSeconds - elapsed)
-            setDlcRemainingSeconds(remaining)
-            // 更新进度条：已过时间 / 总时间
-            const progress = Math.min(100, Math.round(((estimatedTotal - remaining) / estimatedTotal) * 100))
-            setOverallProgress(progress)
-          }, 1000)
+          const externalStartedAt = startTime || (task.created_at ? new Date(task.created_at) : new Date())
+          if (!startTime) setStartTime(externalStartedAt)
+          startExternalTrainingTimer(externalStartedAt, task.progress || 0)
+          pollingRef.current = setInterval(() => pollTaskStatus(tid), 5000)
 
           // 只有第一次才自动返回（新建任务，不是重新进入），3秒后自动返回项目中心
           // isDlcActive 之前是 false 说明这是新建任务，第一次进入 DLC 模式
@@ -755,10 +693,6 @@ export function AutoPipeline({
               onDlcStarted?.()
             }, 3000)
           }
-
-          // DLC 模式下进度由本地倒计时更新
-          const progress = Math.min(100, Math.round(((estimatedTotal - remainingSeconds) / estimatedTotal) * 100))
-          setOverallProgress(progress)
         } else {
           // 非 DLC 步骤，正常计算进度
           const stepIds = ["preprocess", "embedding", "training", "evaluation", "visualization"]
@@ -828,7 +762,7 @@ export function AutoPipeline({
         console.error("Poll task error:", error)
       }
     },
-    [addLog, onComplete, onError, startTime]
+    [addLog, onComplete, onError, startExternalTrainingTimer, startTime]
   )
 
   const handleUploadSubmit = async () => {
@@ -1280,31 +1214,20 @@ export function AutoPipeline({
               </div>
             )}
 
-            {/* DLC 云端训练活跃：显示倒计时替代执行日志 */}
+            {/* 外部训练活跃：显示已用时 */}
             {isDlcActive && status === "running" ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 p-6">
                 <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-slate-700">任务已提交到云端训练</h2>
+                  <h2 className="text-2xl font-bold text-slate-700">训练任务正在运行</h2>
                   <p className="text-slate-500">训练完成后会自动保存结果，下次打开项目即可查看</p>
                 </div>
-                {dlcRemainingSeconds > 0 ? (
-                  <>
-                    <div className="text-5xl font-bold text-blue-600">
-                      {Math.floor(dlcRemainingSeconds / 60)} 分 {dlcRemainingSeconds % 60} 秒
-                    </div>
-                    <p className="text-slate-500">预计剩余时间</p>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-3">
-                      <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xl text-slate-600">抱歉，任务超出预估时长</p>
-                      <p className="text-sm text-slate-500">正在等待训练完成...</p>
-                    </div>
-                  </>
-                )}
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                  <div className="text-5xl font-bold text-blue-600">
+                    {Math.floor(dlcRemainingSeconds / 60)} 分 {dlcRemainingSeconds % 60} 秒
+                  </div>
+                </div>
+                <p className="text-slate-500">已用时间</p>
                 <Button
                   onClick={() => onDlcStarted?.()}
                   className="px-8 py-2 bg-blue-600 hover:bg-blue-700"
