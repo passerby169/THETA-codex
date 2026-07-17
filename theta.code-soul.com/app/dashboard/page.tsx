@@ -754,16 +754,49 @@ function DashboardContent() {
     try {
       let fullText = ""
       let streamed = false
+      const currentProject = activeTabId !== "hub" ? projects.find(p => p.id === activeTabId) : null
+      const chatContext = {
+        current_view_name: activeTabId === "hub" ? "项目中心" : "项目工作台",
+        current_view: activeTabId === "hub" ? "hub" : "workspace",
+        app_state: "workspace",
+        projects: projects.map(p => ({
+          name: p.name,
+          dataset_name: p.datasetName,
+          status: p.pipelineStatus,
+          mode: p.mode,
+          models: p.models,
+          num_topics: p.numTopics,
+          has_results: p.hasResults,
+        })),
+        current_project: currentProject ? {
+          id: currentProject.id,
+          name: currentProject.name,
+          dataset_name: currentProject.datasetName || currentProject.name,
+          mode: currentProject.mode || "zero_shot",
+          models: currentProject.models || ["theta"],
+          num_topics: currentProject.numTopics || 20,
+          pipeline_status: currentProject.pipelineStatus,
+          has_results: currentProject.hasResults,
+          task_id: currentProject.taskId,
+        } : null,
+        selected_images: images.map((img) => ({
+          name: img.name,
+          mime_type: img.mimeType,
+          size: img.size,
+          dataset: img.dataset || currentProject?.datasetName || currentProject?.name,
+          path: img.path,
+          source_url: img.sourceUrl,
+        })),
+        selected_files: files.map((file) => ({
+          name: file.name,
+          mime_type: file.mimeType,
+          size: file.size,
+        })),
+      }
 
       // 尝试 SSE 流式对话
       try {
-        for await (const chunk of ETMAgentAPI.chatStream(content || PROMPTS.CHAT.default_message_with_attachments, "dashboard", {
-          current_view_name: "项目中心",
-          current_view: activeTabId === "hub" ? "hub" : "workspace",
-          app_state: "workspace",
-          projects: projects.map(p => ({ name: p.name, status: p.pipelineStatus, mode: p.mode })),
-          current_project: activeTabId !== "hub" ? projects.find(p => p.id === activeTabId) : null,
-        }, images, files)) {
+        for await (const chunk of ETMAgentAPI.chatStream(content || PROMPTS.CHAT.default_message_with_attachments, "dashboard", chatContext, images, files)) {
           streamed = true
           if ((chunk.type === "content" || chunk.type === "text" || chunk.type === "message") && chunk.content) {
             fullText += chunk.content
@@ -780,12 +813,8 @@ function DashboardContent() {
         // SSE 不可用，fallback 到普通对话
         if (!streamed) {
             const response = await ETMAgentAPI.chat(content || PROMPTS.CHAT.default_message_with_attachments, {
-            current_view_name: "项目中心",
-            current_view: activeTabId === "hub" ? "hub" : "workspace",
-            app_state: "workspace",
+            ...chatContext,
             session_id: "dashboard",
-            projects: projects.map(p => ({ name: p.name, status: p.pipelineStatus, mode: p.mode })),
-            current_project: activeTabId !== "hub" ? projects.find(p => p.id === activeTabId) : null,
             }, { images, files, sessionId: "dashboard" })
           fullText = response.message ?? (response as { response?: string }).response ?? "（无回复）"
         }

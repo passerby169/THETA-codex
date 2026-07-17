@@ -219,6 +219,9 @@ export interface AgentChatImagePayload {
   mimeType: string;
   size: number;
   dataUrl: string;
+  dataset?: string;
+  path?: string;
+  sourceUrl?: string;
 }
 
 export interface AgentChatFilePayload {

@@ -73,6 +73,9 @@ export interface SendMessageImage {
   mimeType: string
   size: number
   dataUrl: string
+  dataset?: string
+  path?: string
+  sourceUrl?: string
 }
 
 export interface SendMessageFile {
@@ -486,6 +489,9 @@ export function AiSidebar({
         mimeType: blob.type || "image/png",
         size: blob.size,
         dataUrl: reader.result as string,
+        dataset,
+        path,
+        sourceUrl: url,
       })
       reader.onerror = reject
       reader.readAsDataURL(blob)
@@ -503,7 +509,20 @@ export function AiSidebar({
           const imageAttachments = await Promise.all(
             images.map((img) => fetchImageAsDataUrl(img.url, img.name, img.dataset, img.path))
           )
-          onSendMessage({ content: "请分析以下图片：", images: imageAttachments })
+          const imageContext = images
+            .map((img, index) => {
+              const details = [
+                `图表 ${index + 1}: ${img.name}`,
+                img.dataset ? `数据集: ${img.dataset}` : "",
+                img.path ? `结果路径: ${img.path}` : "",
+              ].filter(Boolean)
+              return `- ${details.join("；")}`
+            })
+            .join("\n")
+          onSendMessage({
+            content: `请结合当前项目的数据集、训练结果和以下图表进行分析：\n${imageContext}`,
+            images: imageAttachments,
+          })
         } catch (err) {
           console.error("Failed to fetch images:", err)
           // 回退到发送 URL
@@ -595,7 +614,15 @@ export function AiSidebar({
           // 拖拽的是图片，通过后端代理获取 base64 发送给 AI 分析
           try {
             const imageAttachment = await fetchImageAsDataUrl(parsed.url, parsed.name || "image", parsed.dataset, parsed.path)
-            onSendMessage({ content: "请分析以下图片：", images: [imageAttachment] })
+            const details = [
+              `图表: ${parsed.name || "image"}`,
+              parsed.dataset ? `数据集: ${parsed.dataset}` : "",
+              parsed.path ? `结果路径: ${parsed.path}` : "",
+            ].filter(Boolean).join("；")
+            onSendMessage({
+              content: `请结合当前项目的数据集、训练结果和以下图表进行分析：\n- ${details}`,
+              images: [imageAttachment],
+            })
           } catch {
             // 回退到发送 URL
             const imageMarkdown = `![${parsed.name || "image"}](${parsed.url})`

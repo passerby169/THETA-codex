@@ -1175,6 +1175,59 @@ def _strip_thinking_tags(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
 
 
+def _summarize_chat_attachments(request: ChatRequest) -> str:
+    lines: List[str] = []
+    for index, image in enumerate(request.images or [], start=1):
+        if not isinstance(image, dict):
+            continue
+        details = [
+            f"图片{index}",
+            f"名称={image.get('name')}" if image.get("name") else "",
+            f"数据集={image.get('dataset')}" if image.get("dataset") else "",
+            f"结果路径={image.get('path')}" if image.get("path") else "",
+            f"类型={image.get('mimeType') or image.get('mime_type')}" if image.get("mimeType") or image.get("mime_type") else "",
+        ]
+        lines.append("；".join(part for part in details if part))
+    for index, file in enumerate(request.files or [], start=1):
+        if not isinstance(file, dict):
+            continue
+        details = [
+            f"文件{index}",
+            f"名称={file.get('name')}" if file.get("name") else "",
+            f"类型={file.get('mimeType') or file.get('mime_type')}" if file.get("mimeType") or file.get("mime_type") else "",
+        ]
+        lines.append("；".join(part for part in details if part))
+    return "\n".join(lines)
+
+
+def _build_chat_user_text(request: ChatRequest) -> str:
+    text = request.message or ""
+    attachment_summary = _summarize_chat_attachments(request)
+    if attachment_summary:
+        text = f"{text}\n\n用户随消息附加了以下资料：\n{attachment_summary}".strip()
+    return text
+
+
+def _build_openai_user_content(request: ChatRequest) -> Any:
+    text = _build_chat_user_text(request)
+    image_parts: List[Dict[str, Any]] = []
+    for image in request.images or []:
+        if not isinstance(image, dict):
+            continue
+        image_url = image.get("dataUrl") or image.get("data_url") or image.get("url")
+        if not isinstance(image_url, str) or not image_url.strip():
+            continue
+        image_parts.append({
+            "type": "image_url",
+            "image_url": {"url": image_url.strip(), "detail": os.getenv("VISION_IMAGE_DETAIL", "low")},
+        })
+
+    if not image_parts:
+        return text
+
+    return [{"type": "text", "text": text}, *image_parts]
+
+
 def _chat_with_openai_compatible(request: ChatRequest) -> Optional[str]:
     api_key = (
         os.getenv("CHAT_API_KEY")
@@ -1193,16 +1246,27 @@ def _chat_with_openai_compatible(request: ChatRequest) -> Optional[str]:
         or os.getenv("EMBEDDING_API_BASE")
         or "https://api.minimaxi.com/v1"
     ).rstrip("/")
-    model = (
-        os.getenv("CHAT_MODEL")
-        or os.getenv("MINIMAX_TEXT_MODEL")
-        or os.getenv("VISION_MODEL")
-        or os.getenv("EMBEDDING_MODEL")
-        or "MiniMax-M1"
-    )
+    has_images = bool(request.images)
+    if has_images:
+        model = (
+            os.getenv("CHAT_VISION_MODEL")
+            or os.getenv("VISION_MODEL")
+            or os.getenv("MINIMAX_VISION_MODEL")
+            or os.getenv("CHAT_MODEL")
+            or os.getenv("MINIMAX_TEXT_MODEL")
+            or "MiniMax-M3"
+        )
+    else:
+        model = (
+            os.getenv("CHAT_MODEL")
+            or os.getenv("MINIMAX_TEXT_MODEL")
+            or os.getenv("VISION_MODEL")
+            or os.getenv("EMBEDDING_MODEL")
+            or "MiniMax-M1"
+        )
     messages = [
         {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
-        {"role": "user", "content": request.message},
+        {"role": "user", "content": _build_openai_user_content(request)},
     ]
     if request.context:
         messages.insert(1, {"role": "system", "content": f"当前页面上下文：{json.dumps(request.context, ensure_ascii=False)}"})
@@ -1239,7 +1303,7 @@ def _chat_with_dashscope(request: ChatRequest) -> Optional[str]:
         model=DASHSCOPE_MODEL,
         messages=[
             {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": request.message},
+            {"role": "user", "content": _build_chat_user_text(request)},
         ],
     )
     if response.status_code == 200:
