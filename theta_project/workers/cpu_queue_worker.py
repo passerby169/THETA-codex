@@ -44,6 +44,7 @@ DEFAULT_TIMEOUT = int(os.getenv("CPU_WORKER_JOB_TIMEOUT_SECONDS", str(60 * 60 * 
 CALLBACK_BASE_URL = os.getenv("CPU_WORKER_CALLBACK_BASE_URL") or os.getenv("API_BASE_URL")
 CANCEL_KEY_PREFIX = os.getenv("REDIS_TRAINING_CANCEL_PREFIX", "theta:training:cancel")
 SUPPORTED_RAW_SUFFIXES = {".csv", ".txt", ".md", ".json", ".jsonl", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
+SUPPORTED_RAW_SUFFIXES_LABEL = "CSV, TXT, MD, JSON/JSONL, DOC/DOCX, PDF, XLS/XLSX"
 
 
 class CancelledJob(RuntimeError):
@@ -180,6 +181,26 @@ def terminate_process(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=10)
 
 
+def friendly_error_message(exc: Exception) -> str:
+    raw = str(exc)
+    lower = raw.lower()
+    if "vocabulary is empty" in lower or "0 words from" in lower:
+        return (
+            "数据清洗后没有可用于建模的词，无法训练主题模型。"
+            "请优先上传 CSV（每行一条文本，文本列名可用 text/content/comment/cleaned_content 等），"
+            "至少 10 行用于调试，正式训练建议 30-50 行以上；"
+            "如果使用 TXT/MD，请上传包含多篇文档的文件夹，不建议上传单个短文本。"
+        )
+    if "no text column" in lower or "text column" in lower and "not found" in lower:
+        return (
+            "CSV 中没有找到可用文本列。请使用 text、content、comment、cleaned_content、body、review、message "
+            "或“文本/评论/内容”等列名，且每行是一条待分析文本。"
+        )
+    if "unsupported file type" in lower:
+        return raw
+    return raw
+
+
 def run_command(
     cmd: list[str],
     env: dict[str, str],
@@ -213,6 +234,7 @@ def run_command(
     started_at = time.time()
     output_done = False
     return_code: int | None = None
+    output_tail: list[str] = []
 
     while True:
         if is_cancelled(cancel_client, job_id):
@@ -228,6 +250,9 @@ def run_command(
                 output_done = True
             else:
                 print(item, flush=True)
+                output_tail.append(item)
+                if len(output_tail) > 80:
+                    output_tail = output_tail[-80:]
 
         return_code = process.poll()
         if return_code is not None and output_done:
@@ -238,7 +263,9 @@ def run_command(
         time.sleep(0.2)
 
     if return_code != 0:
-        raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(cmd)}")
+        tail = "\n".join(output_tail[-30:])
+        detail = f"\nLast output:\n{tail}" if tail else ""
+        raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(cmd)}{detail}")
 
 
 def build_base_args(payload: dict[str, Any]) -> dict[str, str]:
@@ -311,7 +338,7 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
         source_name = str(payload.get("filename") or Path(str(input_key)).name)
         suffix = Path(source_name).suffix.lower() or Path(str(input_key)).suffix.lower() or ".csv"
         if suffix not in SUPPORTED_RAW_SUFFIXES:
-            suffix = ".csv"
+            raise RuntimeError(f"Unsupported file type {suffix or '(none)'}. Supported: {SUPPORTED_RAW_SUFFIXES_LABEL}.")
         raw_input = raw_dir / f"{dataset}_raw{suffix}"
         raw_input.write_bytes(storage.get_object_bytes(str(input_key)))
         print(f"[job {payload['job_id']}] downloaded {input_key} -> {raw_input}", flush=True)
@@ -406,7 +433,7 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
         write_training_log(output_prefix, "cancelled", message)
         callback(payload, "cancelled", message)
     except Exception as exc:
-        message = str(exc)
+        message = friendly_error_message(exc)
         print(f"[job {payload.get('job_id')}] failed: {message}", flush=True)
         write_training_log(output_prefix, "failed", message)
         callback(payload, "failed", message)

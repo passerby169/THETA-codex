@@ -117,6 +117,64 @@ function formatDuration(ms: number): string {
 
 // ==================== 组件 ====================
 
+const SUPPORTED_DATA_EXTENSIONS = new Set([
+  ".csv",
+  ".txt",
+  ".md",
+  ".json",
+  ".jsonl",
+  ".doc",
+  ".docx",
+  ".pdf",
+  ".xls",
+  ".xlsx",
+])
+
+const PLAIN_TEXT_EXTENSIONS = new Set([".txt", ".md"])
+const MIN_TRAINING_ROWS = 10
+const MIN_PLAIN_TEXT_CHARS = 500
+
+function getFileExtension(fileName: string): string {
+  const dotIndex = fileName.lastIndexOf(".")
+  return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : ""
+}
+
+async function validateFilesForTraining(files: File[]): Promise<string | null> {
+  const unsupported = files.filter(file => !SUPPORTED_DATA_EXTENSIONS.has(getFileExtension(file.name)))
+  if (unsupported.length > 0) {
+    return `文件格式不正确：${unsupported.map(file => file.name).join("、")}。支持 CSV、TXT、MD、JSON/JSONL、DOC/DOCX、PDF、XLS/XLSX。`
+  }
+
+  const emptyFiles = files.filter(file => file.size === 0)
+  if (emptyFiles.length > 0) {
+    return `文件内容为空：${emptyFiles.map(file => file.name).join("、")}。请上传包含文本内容的数据文件。`
+  }
+
+  const csvFiles = files.filter(file => getFileExtension(file.name) === ".csv")
+  for (const file of csvFiles) {
+    const sample = await file.slice(0, 256 * 1024).text()
+    const rows = sample.split(/\r?\n/).map(row => row.trim()).filter(Boolean)
+    if (rows.length < Math.min(MIN_TRAINING_ROWS + 1, 6)) {
+      return `${file.name} 可读取的数据行过少。主题模型建议 CSV 每行一条文本，至少 10 行用于调试，正式训练建议 30-50 行以上。`
+    }
+  }
+
+  const plainTextFiles = files.filter(file => PLAIN_TEXT_EXTENSIONS.has(getFileExtension(file.name)))
+  if (files.length === 1 && plainTextFiles.length === 1) {
+    const text = await plainTextFiles[0].text()
+    const meaningfulLines = text
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line.length >= 8).length
+    const charCount = text.replace(/\s/g, "").length
+    if (meaningfulLines < MIN_TRAINING_ROWS || charCount < MIN_PLAIN_TEXT_CHARS) {
+      return `${plainTextFiles[0].name} 是单个短文本文件，清洗后很容易没有有效词或只有 1 篇文档，无法稳定训练主题模型。请优先上传 CSV（每行一条文本，含 text/content/comment 等文本列），或上传包含多篇 TXT/MD 文档的文件夹。`
+    }
+  }
+
+  return null
+}
+
 export function AutoPipeline({
   projectName,
   mode: defaultMode = "zero_shot",
@@ -385,7 +443,17 @@ export function AutoPipeline({
   // ---------- 上传相关 ----------
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return
-    setSelectedFiles(prev => [...prev, ...Array.from(files)])
+    const incoming = Array.from(files)
+    const supported = incoming.filter(file => SUPPORTED_DATA_EXTENSIONS.has(getFileExtension(file.name)))
+    const unsupported = incoming.filter(file => !SUPPORTED_DATA_EXTENSIONS.has(getFileExtension(file.name)))
+    if (unsupported.length > 0) {
+      setConfigError(`已忽略不支持的文件：${unsupported.map(file => file.name).join("、")}。支持 CSV、TXT、MD、JSON/JSONL、DOC/DOCX、PDF、XLS/XLSX。`)
+    } else {
+      setConfigError(null)
+    }
+    if (supported.length > 0) {
+      setSelectedFiles(prev => [...prev, ...supported])
+    }
   }
 
   /** 递归读取 FileSystemEntry（文件夹拖拽时使用） */
@@ -435,7 +503,16 @@ export function AutoPipeline({
       allFiles.push(...files)
     }
     if (allFiles.length > 0) {
-      setSelectedFiles(prev => [...prev, ...allFiles])
+      const supported = allFiles.filter(file => SUPPORTED_DATA_EXTENSIONS.has(getFileExtension(file.name)))
+      const unsupported = allFiles.filter(file => !SUPPORTED_DATA_EXTENSIONS.has(getFileExtension(file.name)))
+      if (unsupported.length > 0) {
+        setConfigError(`文件夹中已忽略 ${unsupported.length} 个不支持的文件。支持 CSV、TXT、MD、JSON/JSONL、DOC/DOCX、PDF、XLS/XLSX。`)
+      } else {
+        setConfigError(null)
+      }
+      if (supported.length > 0) {
+        setSelectedFiles(prev => [...prev, ...supported])
+      }
     }
   }
 
@@ -817,6 +894,13 @@ export function AutoPipeline({
   const handleUploadSubmit = async () => {
     if (selectedFiles.length === 0) return
     if (hasUploaded.current) return
+    const validationError = await validateFilesForTraining(selectedFiles)
+    if (validationError) {
+      setConfigError(validationError)
+      addLog(`❌ ${validationError}`)
+      return
+    }
+    setConfigError(null)
     hasUploaded.current = true
 
     // 立即弹出配置面板，不要等上传完成
