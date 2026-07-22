@@ -115,6 +115,13 @@ function formatDuration(ms: number): string {
   return `${minutes} 分 ${remainingSeconds} 秒`
 }
 
+function parseBackendDate(value?: string): Date | null {
+  if (!value) return null
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 // ==================== 组件 ====================
 
 const SUPPORTED_DATA_EXTENSIONS = new Set([
@@ -186,7 +193,6 @@ export function AutoPipeline({
   onUploadComplete,
   onTaskCreated,
   onConfigConfirmed,
-  onDlcStarted,
 }: AutoPipelineProps) {
   /** 初始用项目名生成；上传成功后改用后端返回的 dataset_name，避免前后端 sanitize 不一致 */
   const [effectiveDatasetName, setEffectiveDatasetName] = useState<string>(() => getDatasetName(projectName))
@@ -195,7 +201,7 @@ export function AutoPipeline({
   const [overallProgress, setOverallProgress] = useState(0)
   const [status, setStatus] = useState<"upload" | "column_select" | "config" | "running" | "completed" | "error">("upload")
   const [taskId, setTaskId] = useState<string | null>(null)
-  const [showLogs, setShowLogs] = useState(false)
+  const [showLogs, setShowLogs] = useState(true)
   const [logs, setLogs] = useState<string[]>([])
   const [startTime, setStartTime] = useState<Date | null>(null)
   const [endTime, setEndTime] = useState<Date | null>(null)
@@ -224,7 +230,7 @@ export function AutoPipeline({
   /** 避免重复打印外部训练启动提示 */
   const lastDlcMessageRef = useRef<boolean>(false)
   /** 外部训练已用时 */
-  const [isDlcActive, setIsDlcActive] = useState(false)
+  const [, setIsDlcActive] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [dlcRemainingSeconds, setDlcRemainingSeconds] = useState(0)
   const dlcCountdownRef = useRef<NodeJS.Timeout | null>(null)
@@ -234,7 +240,7 @@ export function AutoPipeline({
   /** 用户在参数面板确认的配置（上传未完成时暂存，等待上传完成后启动流水线） */
   const pendingConfigRef = useRef<{ config: AnalysisConfig; columnSelection: ColumnSelection | null } | null>(null)
 
-  const startExternalTrainingTimer = useCallback((startedAt?: Date | null, progress?: number) => {
+  const startExternalTrainingTimer = useCallback((startedAt?: Date | null) => {
     if (!externalStartedAtRef.current) {
       externalStartedAtRef.current = startedAt?.getTime() || Date.now()
     }
@@ -242,9 +248,6 @@ export function AutoPipeline({
       const startedAtMs = externalStartedAtRef.current || Date.now()
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
       setDlcRemainingSeconds(elapsedSeconds)
-      if (typeof progress === "number") {
-        setOverallProgress(Math.max(0, Math.min(99, Math.round(progress))))
-      }
     }
     tick()
     if (dlcCountdownRef.current) return
@@ -316,7 +319,7 @@ export function AutoPipeline({
       const startedAt = new Date()
       externalStartedAtRef.current = startedAt.getTime()
       setStartTime(startedAt)
-      startExternalTrainingTimer(startedAt, 0)
+      startExternalTrainingTimer(startedAt)
       addLog("ℹ️ 外部训练任务已开始")
       addLog("ℹ️ 训练过程中无需保持页面打开，可随时返回项目中心")
       addLog("ℹ️ 下次打开项目时会自动更新训练结果")
@@ -358,6 +361,7 @@ export function AutoPipeline({
           }
           setResult(pipelineResult)
           addLog("✅ 训练已完成")
+          onComplete?.(pipelineResult)
           return
         }
 
@@ -370,7 +374,7 @@ export function AutoPipeline({
 
         // 运行中 → 恢复轮询
         setStatus("running")
-        const restoredStartedAt = new Date()
+        const restoredStartedAt = parseBackendDate(task.created_at) || new Date()
         setStartTime(restoredStartedAt)
         setOverallProgress(task.progress || 0)
         const isDlc =
@@ -387,7 +391,7 @@ export function AutoPipeline({
             message: task.message || "云端训练中...",
           })
           setIsDlcActive(true)
-          startExternalTrainingTimer(restoredStartedAt, task.progress || 0)
+          startExternalTrainingTimer(restoredStartedAt)
         }
         addLog(`恢复任务进度: ${task.message || task.status}`)
 
@@ -409,7 +413,7 @@ export function AutoPipeline({
           const startedAt = new Date()
           externalStartedAtRef.current = startedAt.getTime()
           setStartTime(startedAt)
-          startExternalTrainingTimer(startedAt, 0)
+          startExternalTrainingTimer(startedAt)
           addLog("⚠️ 无法获取任务详情，已保持外部训练等待状态")
           // 继续轮询检测状态
           pollingRef.current = setInterval(() => pollTaskStatus(initialTaskId), 2000)
@@ -770,22 +774,11 @@ export function AutoPipeline({
             lastDlcMessageRef.current = true
           }
 
-          // 保留状态轮询，只用本地计时器展示真实已用时。
-          clearInterval(pollingRef.current!)
-          pollingRef.current = null
+          // 保留现有状态轮询，只用本地计时器展示真实已用时。
           setIsDlcActive(true)
-          const externalStartedAt = startTime || new Date()
+          const externalStartedAt = startTime || parseBackendDate(task.created_at) || new Date()
           if (!startTime) setStartTime(externalStartedAt)
-          startExternalTrainingTimer(externalStartedAt, task.progress || 0)
-          pollingRef.current = setInterval(() => pollTaskStatus(tid), 5000)
-
-          // 只有第一次才自动返回（新建任务，不是重新进入），3秒后自动返回项目中心
-          // isDlcActive 之前是 false 说明这是新建任务，第一次进入 DLC 模式
-          if (!isDlcActive) {
-            setTimeout(() => {
-              onDlcStarted?.()
-            }, 3000)
-          }
+          startExternalTrainingTimer(externalStartedAt)
         } else {
           // 非 DLC 步骤，正常计算进度
           const stepIds = ["preprocess", "embedding", "training", "evaluation", "visualization"]
@@ -888,7 +881,7 @@ export function AutoPipeline({
         console.error("Poll task error:", error)
       }
     },
-    [addLog, isDlcActive, onComplete, onDlcStarted, onError, startExternalTrainingTimer, startTime]
+    [addLog, onComplete, onError, startExternalTrainingTimer, startTime]
   )
 
   const handleUploadSubmit = async () => {
@@ -1104,7 +1097,7 @@ export function AutoPipeline({
       setPendingJobIdForConfig(null)
       onConfigConfirmed?.(config)
       if (dataset) {
-        startPipelineAfterUpload(dataset, jobId, config, columnSelection)
+        startPipelineAfterUpload(dataset, jobId ?? undefined, config, columnSelection)
       }
     },
     [pendingDatasetForConfig, pendingJobIdForConfig, effectiveDatasetName, uploadJobId, columnSelection, onConfigConfirmed, startPipelineAfterUpload, addLog]
@@ -1199,7 +1192,7 @@ export function AutoPipeline({
             <Clock className="w-3.5 h-3.5" />
             {endTime
               ? formatDuration(endTime.getTime() - startTime.getTime())
-              : formatDuration(Date.now() - startTime.getTime())}
+              : formatDuration(dlcRemainingSeconds * 1000)}
           </div>
         )}
       </div>
@@ -1376,34 +1369,24 @@ export function AutoPipeline({
               </div>
             )}
 
-            {/* 外部训练活跃：显示已用时 */}
-            {isDlcActive && status === "running" ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 p-6">
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-slate-700">训练任务正在运行</h2>
-                  <p className="text-slate-500">训练完成后会自动保存结果，下次打开项目即可查看</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-                  <div className="text-5xl font-bold text-blue-600">
-                    {Math.floor(dlcRemainingSeconds / 60)} 分 {dlcRemainingSeconds % 60} 秒
-                  </div>
-                </div>
-                <p className="text-slate-500">已用时间</p>
-                <div className="flex flex-wrap justify-center gap-3">
-                  <Button
-                    onClick={() => onDlcStarted?.()}
-                    className="px-8 py-2 bg-blue-600 hover:bg-blue-700"
-                    size="lg"
-                  >
-                    返回项目中心
+            <Collapsible open={showLogs} onOpenChange={setShowLogs} className="flex-1 flex flex-col min-h-0">
+              <div className="mb-2 flex items-center gap-2">
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" className="flex-1 justify-between">
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      执行日志
+                    </span>
+                    {showLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </Button>
+                </CollapsibleTrigger>
+                {status === "running" && taskId && (
                   <Button
                     onClick={handleCancelTraining}
                     variant="outline"
-                    className="px-8 py-2 border-red-200 text-red-600 hover:bg-red-50"
-                    size="lg"
-                    disabled={!taskId || isCancelling}
+                    size="sm"
+                    className="shrink-0 border-red-200 text-red-600 hover:bg-red-50"
+                    disabled={isCancelling}
                   >
                     {isCancelling ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -1412,36 +1395,24 @@ export function AutoPipeline({
                     )}
                     {isCancelling ? "停止中..." : "停止训练"}
                   </Button>
-                </div>
+                )}
               </div>
-            ) : (
-              <Collapsible open={showLogs} onOpenChange={setShowLogs} className="flex-1 flex flex-col min-h-0">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-between mb-2">
-                    <span className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      执行日志
-                    </span>
-                    {showLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="flex-1 min-h-0">
-                  <ScrollArea className="h-64 bg-slate-900 rounded-lg p-4">
-                    <div className="font-mono text-xs text-slate-300 space-y-1">
-                      {logs.length === 0 ? (
-                        <p className="text-slate-500">暂无日志</p>
-                      ) : (
-                        logs.map((log, idx) => (
-                          <div key={idx} className="whitespace-pre-wrap">
-                            {log}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </ScrollArea>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
+              <CollapsibleContent className="flex-1 min-h-0">
+                <ScrollArea className="h-72 md:h-80 bg-slate-900 rounded-lg p-4">
+                  <div className="font-mono text-xs text-slate-300 space-y-1">
+                    {logs.length === 0 ? (
+                      <p className="text-slate-500">暂无日志</p>
+                    ) : (
+                      logs.map((log, idx) => (
+                        <div key={idx} className="whitespace-pre-wrap">
+                          {log}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </CollapsibleContent>
+            </Collapsible>
           </CardContent>
       </Card>
 

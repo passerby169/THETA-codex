@@ -53,11 +53,40 @@ export interface TrainStartResponse {
 
 export interface TrainStatusResponse {
   job_id: number;
+  file_id?: number;
+  dataset_name?: string;
   status: 'pending' | 'creating' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   dlc_job_id?: string;
   error_message?: string;
   created_at: string;
   message?: string;
+  model_type?: string;
+  model_size?: string;
+  num_topics?: number;
+  mode?: string;
+}
+
+export interface TrainJobResponse {
+  id: number;
+  user_id: number;
+  file_id?: number;
+  dataset_name?: string;
+  status: TrainStatusResponse['status'];
+  dlc_job_id?: string;
+  run_id?: string;
+  error_message?: string;
+  created_at: string;
+  model_type?: string;
+  model_size?: string;
+  num_topics?: number;
+  epochs?: number;
+  batch_size?: number;
+  learning_rate?: number;
+  hidden_dim?: number;
+  patience?: number;
+  vocab_size?: number;
+  mode?: string;
+  language?: string;
 }
 
 export interface TrainMetricsResponse {
@@ -237,7 +266,7 @@ export const BackendAPI = {
    * 获取训练任务列表
    * GET /api/train/jobs
    */
-  async getTrainJobs(): Promise<TrainStatusResponse[]> {
+  async getTrainJobs(): Promise<TrainJobResponse[]> {
     return apiFetch(API_ENDPOINTS.training.jobs);
   },
 
@@ -311,7 +340,7 @@ export const BackendAPI = {
 
     try {
       const result = await client.put(objectKey, file, {
-        progress: (p) => {
+        progress: (p: number) => {
           if (onProgress) {
             onProgress(20 + Math.round(p * 75));
           }

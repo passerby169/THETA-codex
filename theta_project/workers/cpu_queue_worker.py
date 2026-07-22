@@ -42,6 +42,8 @@ WORK_ROOT = Path(os.getenv("CPU_WORKER_WORK_ROOT", PROJECT_DIR / "worker_runs"))
 KEEP_WORKDIR = os.getenv("CPU_WORKER_KEEP_WORKDIR", "0").lower() in {"1", "true", "yes"}
 DEFAULT_TIMEOUT = int(os.getenv("CPU_WORKER_JOB_TIMEOUT_SECONDS", str(60 * 60 * 12)))
 CALLBACK_BASE_URL = os.getenv("CPU_WORKER_CALLBACK_BASE_URL") or os.getenv("API_BASE_URL")
+CALLBACK_MAX_ATTEMPTS = max(1, int(os.getenv("CPU_WORKER_CALLBACK_MAX_ATTEMPTS", "5")))
+CALLBACK_RETRY_BASE_SECONDS = max(0.5, float(os.getenv("CPU_WORKER_CALLBACK_RETRY_BASE_SECONDS", "2")))
 CANCEL_KEY_PREFIX = os.getenv("REDIS_TRAINING_CANCEL_PREFIX", "theta:training:cancel")
 SUPPORTED_RAW_SUFFIXES = {".csv", ".txt", ".md", ".json", ".jsonl", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
 SUPPORTED_RAW_SUFFIXES_LABEL = "CSV, TXT, MD, JSON/JSONL, DOC/DOCX, PDF, XLS/XLSX"
@@ -110,14 +112,24 @@ def callback(payload: dict[str, Any], status: str, error_message: str | None = N
     if error_message:
         body["error_message"] = error_message[:2000]
 
-    try:
-        response = requests.post(callback_url, json=body, timeout=30)
-        if response.status_code >= 400:
-            raise RuntimeError(f"HTTP {response.status_code} {response.text[:500]}")
-        return True
-    except Exception as exc:
-        print(f"[callback] failed for {callback_url}: {exc}", flush=True)
-        return False
+    for attempt in range(1, CALLBACK_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(callback_url, json=body, timeout=30)
+            if response.status_code >= 400:
+                raise RuntimeError(f"HTTP {response.status_code} {response.text[:500]}")
+            return True
+        except Exception as exc:
+            if attempt >= CALLBACK_MAX_ATTEMPTS:
+                print(f"[callback] failed permanently for {callback_url}: {exc}", flush=True)
+                return False
+            delay = min(30.0, CALLBACK_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+            print(
+                f"[callback] attempt {attempt}/{CALLBACK_MAX_ATTEMPTS} failed; "
+                f"retrying in {delay:.1f}s: {exc}",
+                flush=True,
+            )
+            time.sleep(delay)
+    return False
 
 
 def write_training_log(output_prefix: str, status: str, message: str, metrics: list[dict[str, Any]] | None = None) -> None:
@@ -425,8 +437,14 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
                 {"epoch": int(args["epochs"]), "loss": 0.0, "accuracy": 1.0},
             ],
         )
-        callback(payload, "succeeded")
+        callback_synced = callback(payload, "succeeded")
         print(f"[job {payload['job_id']}] succeeded; uploaded {uploaded} files", flush=True)
+        if not callback_synced:
+            print(
+                f"[job {payload['job_id']}] results are durable; "
+                "the backend will recover status from training_log.json",
+                flush=True,
+            )
     except CancelledJob as exc:
         message = str(exc)
         print(f"[job {payload.get('job_id')}] cancelled: {message}", flush=True)

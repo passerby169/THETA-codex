@@ -91,7 +91,7 @@ function DashboardContent() {
   const transitionTimerRef = useRef<number | null>(null)
   const pollingTimerRef = useRef<number | null>(null)
   const syncTimerRef = useRef<number | null>(null)
-  const refreshProjectsRef = useRef<() => Promise<void>>(() => {})
+  const refreshProjectsRef = useRef<() => Promise<void>>(async () => {})
 
   const handleSendMessageRef = useRef<(payload: string | SendMessagePayload) => void | Promise<void>>(() => {})
 
@@ -137,7 +137,7 @@ function DashboardContent() {
           if (!ds) continue
           const existing = taskByDataset.get(ds)
           if (!existing || (t.status === "completed" && existing.status !== "completed")) {
-            taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : t.status === "failed" ? "error" : "running" })
+            taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : ["failed", "cancelled"].includes(t.status) ? "error" : "running" })
           }
         }
 
@@ -145,24 +145,28 @@ function DashboardContent() {
         for (const p of dbProjects) {
           const key = p.dataset_name || `db-${p.id}`
           seen.add(key)
-          // 如果项目没有 task_id，尝试从任务列表中匹配
+          // 任务列表比项目表更新得更及时；终态任务应覆盖滞后的 running 状态。
           let effectiveTaskId = p.task_id ?? null
           let effectivePipelineStatus = p.pipeline_status
-          if (!effectiveTaskId && p.dataset_name) {
+          if (p.dataset_name) {
             const matched = taskByDataset.get(p.dataset_name)
             if (matched) {
-              effectiveTaskId = matched.task_id
-              effectivePipelineStatus = effectivePipelineStatus || matched.pipeline_status
+              effectiveTaskId = effectiveTaskId || matched.task_id
+              if (!effectivePipelineStatus || effectivePipelineStatus === "running" || matched.pipeline_status === "completed") {
+                effectivePipelineStatus = matched.pipeline_status
+              }
             }
           }
-          // 如果数据库已标记完成，即使 OSS API 返回空也认为有结果（解决未登录时 OSS API 401 问题）
-          const hasResults = p.dataset_name ? (datasetsWithResults.has(p.dataset_name) || p.pipeline_status === "completed") : false
           const derivedPipelineStatus = effectivePipelineStatus === "completed" ? "completed"
             : effectivePipelineStatus === "error" ? "error"
             : effectivePipelineStatus === "running" ? "running"
             : effectiveTaskId ? "running"
             : p.dataset_name && datasetsWithResults.has(p.dataset_name) ? "completed"
             : undefined
+          // 完成任务本身就是可靠的结果信号，OSS 列表失败时也不能退回草稿状态。
+          const hasResults = Boolean(p.dataset_name && (
+            datasetsWithResults.has(p.dataset_name) || derivedPipelineStatus === "completed"
+          ))
           list.push({
             id: `proj-db-${p.id}`,
             name: p.name,
@@ -198,14 +202,18 @@ function DashboardContent() {
             effectivePipelineStatus = matchedTask.pipeline_status as any
             effectiveTaskId = matchedTask.task_id
           }
+          const effectiveHasResults = hasResults || effectivePipelineStatus === "completed"
           list.push({
             id: `proj-${ds.name}`,
             name: ds.name,
             rows: ds.size ?? (ds as any).file_count ?? 0,
             createdAt: "已上传",
-            status: hasResults && !effectivePipelineStatus ? "completed" as const : "draft" as const,
+            status: effectivePipelineStatus === "completed" ? "completed" as const
+              : effectivePipelineStatus === "error" ? "no_result" as const
+              : effectivePipelineStatus === "running" ? "vectorizing" as const
+              : "draft" as const,
             pipelineStatus: effectivePipelineStatus,
-            hasResults,
+            hasResults: effectiveHasResults,
             datasetName: ds.name,
             taskId: effectiveTaskId,
             models: ["theta"],
@@ -234,14 +242,16 @@ function DashboardContent() {
           const ds = t.dataset || (t as any).dataset_name
           if (ds && !seen.has(ds)) {
             seen.add(ds)
-            const hasResults = datasetsWithResults.has(ds)
+            const taskCompleted = t.status === "completed"
+            const taskFailed = t.status === "failed" || t.status === "cancelled"
+            const hasResults = datasetsWithResults.has(ds) || taskCompleted
             list.push({
               id: `proj-${ds}`,
               name: ds,
               rows: 0,
               createdAt: "已分析",
-              status: hasResults ? "completed" as const : (t.status === "completed" ? "no_result" as const : "vectorizing" as const),
-              pipelineStatus: t.status === "completed" ? "completed" : t.status === "failed" ? "error" : "running",
+              status: taskCompleted ? "completed" as const : taskFailed ? "no_result" as const : "vectorizing" as const,
+              pipelineStatus: taskCompleted ? "completed" : taskFailed ? "error" : "running",
               hasResults,
               datasetName: ds,
               models: ["theta"],
@@ -365,7 +375,7 @@ function DashboardContent() {
         if (!ds) continue
         const existing = taskByDataset.get(ds)
         if (!existing || (t.status === "completed" && existing.status !== "completed")) {
-          taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : t.status === "failed" ? "error" : "running" })
+          taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : ["failed", "cancelled"].includes(t.status) ? "error" : "running" })
         }
       }
 
@@ -374,21 +384,24 @@ function DashboardContent() {
         seen.add(key)
         let effectiveTaskId = p.task_id ?? null
         let effectivePipelineStatus = p.pipeline_status
-        if (!effectiveTaskId && p.dataset_name) {
+        if (p.dataset_name) {
           const matched = taskByDataset.get(p.dataset_name)
           if (matched) {
-            effectiveTaskId = matched.task_id
-            effectivePipelineStatus = effectivePipelineStatus || matched.pipeline_status
+            effectiveTaskId = effectiveTaskId || matched.task_id
+            if (!effectivePipelineStatus || effectivePipelineStatus === "running" || matched.pipeline_status === "completed") {
+              effectivePipelineStatus = matched.pipeline_status
+            }
           }
         }
-        // 如果数据库已标记完成，即使 OSS API 返回空也认为有结果（解决未登录时 OSS API 401 问题）
-        const hasResults = p.dataset_name ? (datasetsWithResults.has(p.dataset_name) || p.pipeline_status === "completed") : false
         const derivedPipelineStatus = effectivePipelineStatus === "completed" ? "completed"
           : effectivePipelineStatus === "error" ? "error"
           : effectivePipelineStatus === "running" ? "running"
           : effectiveTaskId ? "running"
           : p.dataset_name && datasetsWithResults.has(p.dataset_name) ? "completed"
           : undefined
+        const hasResults = Boolean(p.dataset_name && (
+          datasetsWithResults.has(p.dataset_name) || derivedPipelineStatus === "completed"
+        ))
         list.push({
           id: `proj-db-${p.id}`,
           name: p.name,
@@ -412,31 +425,40 @@ function DashboardContent() {
       for (const ds of datasets) {
         if (seen.has(ds.name)) continue
         seen.add(ds.name)
-        const hasResults = datasetsWithResults.has(ds.name)
+        const hasStoredResults = datasetsWithResults.has(ds.name)
+        const matchedTask = taskByDataset.get(ds.name)
+        const effectivePipelineStatus = matchedTask?.pipeline_status || (hasStoredResults ? "completed" : undefined)
+        const hasResults = hasStoredResults || effectivePipelineStatus === "completed"
         list.push({
           id: `proj-${ds.name}`,
           name: ds.name,
           rows: ds.size ?? (ds as any).file_count ?? 0,
           createdAt: "已上传",
-          status: hasResults ? "completed" as const : "draft" as const,
-          pipelineStatus: hasResults ? "completed" as any : undefined,
+          status: effectivePipelineStatus === "completed" ? "completed" as const
+            : effectivePipelineStatus === "error" ? "no_result" as const
+            : effectivePipelineStatus === "running" ? "vectorizing" as const
+            : "draft" as const,
+          pipelineStatus: effectivePipelineStatus as any,
           hasResults,
           datasetName: ds.name,
           models: ["theta"],
+          taskId: matchedTask?.task_id || null,
         })
       }
       for (const t of tasks) {
         const ds = t.dataset || (t as any).dataset_name
         if (ds && !seen.has(ds)) {
           seen.add(ds)
-          const hasResults = datasetsWithResults.has(ds)
+          const taskCompleted = t.status === "completed"
+          const taskFailed = t.status === "failed" || t.status === "cancelled"
+          const hasResults = datasetsWithResults.has(ds) || taskCompleted
           list.push({
             id: `proj-${ds}`,
             name: ds,
             rows: 0,
             createdAt: "已分析",
-            status: hasResults ? "completed" as const : (t.status === "completed" ? "no_result" as const : "vectorizing" as const),
-            pipelineStatus: t.status === "completed" ? "completed" : t.status === "failed" ? "error" : "running",
+            status: taskCompleted ? "completed" as const : taskFailed ? "no_result" as const : "vectorizing" as const,
+            pipelineStatus: taskCompleted ? "completed" : taskFailed ? "error" : "running",
             hasResults,
             datasetName: ds,
             models: ["theta"],
@@ -474,22 +496,16 @@ function DashboardContent() {
           }
         }
 
-        // 保留正在运行的项目，但用新 ID 替换旧 temp ID
+        // 只保留后端尚未返回的临时运行项目；后端终态必须覆盖本地 running。
         const runningProjects = prev
           .filter(p => p.pipelineStatus === "running")
-          .map(rp => {
-            if (rp.dbProjectId) {
-              const newVersion = normalizedList.find(np => np.dbProjectId === rp.dbProjectId)
-              if (newVersion) return { ...rp, id: newVersion.id }
-            }
-            return rp
+          .filter(rp => {
+            return !normalizedList.some(np =>
+              (Boolean(rp.dbProjectId) && np.dbProjectId === rp.dbProjectId) ||
+              (!rp.dbProjectId && (np.datasetName || np.name) === (rp.datasetName || rp.name))
+            )
           })
-        const runningIds = new Set(runningProjects.map(p => p.id))
-        const runningDbIds = new Set(runningProjects.filter(p => p.dbProjectId).map(p => p.dbProjectId))
-        const newProjects = normalizedList.filter(np =>
-          !runningIds.has(np.id) && !(np.dbProjectId && runningDbIds.has(np.dbProjectId))
-        )
-        return [...runningProjects, ...newProjects]
+        return [...runningProjects, ...normalizedList]
       })
     } catch (error) {
       console.error("Failed to refresh projects:", error)
@@ -579,6 +595,7 @@ function DashboardContent() {
     const updates = {
       status: "completed" as const,
       pipelineStatus: "completed" as const,
+      hasResults: true,
       ...(result?.dataset && { datasetName: result.dataset }),
     }
     setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...updates } : p)))
@@ -595,11 +612,9 @@ function DashboardContent() {
         // 忽略同步失败
       }
     }
-    // 刷新项目列表，确保 UI 立即从 AutoPipeline 切换到 ProjectResultView
-    refreshProjects()
     // 强制重新渲染 renderContent，切换到结果页面
     setRenderKey(k => k + 1)
-  }, [refreshProjects])
+  }, [])
 
   const handlePipelineError = useCallback((projectId: string) => {
     setProjects(prev => prev.map(p =>
@@ -941,7 +956,7 @@ function DashboardContent() {
           projectName={currentProject.name}
           mode={currentProject.mode || "zero_shot"}
           numTopics={currentProject.numTopics || 20}
-          initialTaskId={currentProject.taskId}
+          initialTaskId={currentProject.taskId ?? undefined}
           pipelineStatus={currentProject.pipelineStatus}
           onConfigConfirmed={async (config) => {
             setProjects(prev => prev.map(p =>
@@ -949,7 +964,7 @@ function DashboardContent() {
                 ? {
                     ...p,
                     mode: config.mode,
-                    numTopics: config.numTopics,
+                    numTopics: config.theta.numTopics,
                     models: config.models.length > 0 ? config.models : ["theta"],
                   }
                 : p
@@ -958,7 +973,7 @@ function DashboardContent() {
               try {
                 await ETMAgentAPI.updateProject(currentProject.dbProjectId, {
                   mode: config.mode,
-                  num_topics: config.numTopics,
+                  num_topics: config.theta.numTopics,
                 })
               } catch { /* skip */ }
             }
@@ -1209,7 +1224,7 @@ function ProjectResultView({ project }: { project: WorkspaceProject }) {
         </TabsContent>
 
         <TabsContent value="export" className="mt-4">
-          <ExportTab dataset={dataset} mode={mode} selectedModel={selectedModel} />
+          <ExportTab dataset={dataset} mode={mode} selectedModel={selectedModel ?? undefined} />
         </TabsContent>
       </Tabs>
     </div>

@@ -75,6 +75,17 @@ class TrainingJob(Base):
     user = relationship("User")
     file = relationship("File")
 
+    @property
+    def dataset_name(self):
+        """Derive the dataset from raw_data/<user>/<dataset>/<file>."""
+        path = (self.file.file_path if self.file else "").replace("\\", "/")
+        parts = [part for part in path.split("/") if part]
+        try:
+            raw_index = parts.index("raw_data")
+        except ValueError:
+            return None
+        return parts[raw_index + 2] if len(parts) > raw_index + 2 else None
+
 
 class VerificationCode(Base):
     __tablename__ = "verification_codes"

@@ -10,6 +10,7 @@
 
 import { apiFetch, API_BASE, AGENT_BASE } from './config';
 import { SimpleETMAPI, BackendAPI } from './backend';
+import type { TrainJobResponse } from './backend';
 
 const USER_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
 
@@ -109,6 +110,7 @@ export interface TaskResponse {
 
   dlc_job_id?: string;
   dlc_status?: string;
+  is_dlc?: boolean;
   error_message?: string;
 
   result?: any;
@@ -351,6 +353,7 @@ export const ETMAgentAPI = {
     file_count: number;
     total_size: number;
     files: string[];
+    job_id: string;
   }> {
     if (!files || files.length === 0) throw new Error('请选择文件');
 
@@ -427,9 +430,28 @@ export const ETMAgentAPI = {
   async getTasks(params?: {
     status?: string; dataset?: string; limit?: number; offset?: number;
   }): Promise<TaskResponse[]> {
-    // 后端暂无任务列表 API，暂时返回空数组
-    // 前端可以通过项目详情页面查看单个任务状态
-    return [];
+    const jobs = await BackendAPI.getTrainJobs();
+    let tasks = jobs.map((job): TaskResponse => ({
+      task_id: String(job.id),
+      status: normalizeTaskStatus(job.status),
+      progress: job.status === 'succeeded' ? 100 : ['failed', 'cancelled'].includes(job.status) ? 0 : 50,
+      message: job.error_message || job.status,
+      error_message: job.error_message,
+      created_at: job.created_at,
+      dataset: job.dataset_name,
+      mode: job.mode,
+      num_topics: job.num_topics,
+      dlc_job_id: job.dlc_job_id,
+    }));
+    if (params?.status) {
+      tasks = tasks.filter(task => task.status === params.status);
+    }
+    if (params?.dataset) {
+      tasks = tasks.filter(task => task.dataset === params.dataset);
+    }
+    const offset = Math.max(0, params?.offset || 0);
+    const limit = params?.limit == null ? tasks.length : Math.max(0, params.limit);
+    return tasks.slice(offset, offset + limit);
   },
 
   // ========== 训练状态轮询 ==========
@@ -442,7 +464,7 @@ export const ETMAgentAPI = {
       return null;
     }
   },
-  async getTrainJobs(): Promise<Array<{id: number; user_id: number; status: string; dlc_job_id?: string; error_message?: string; created_at: string}>> {
+  async getTrainJobs(): Promise<TrainJobResponse[]> {
     try {
       const jobs = await BackendAPI.getTrainJobs();
       return jobs;
@@ -477,6 +499,9 @@ export const ETMAgentAPI = {
         message: status.message || status.status,
         error_message: status.error_message,
         created_at: status.created_at,
+        dataset: status.dataset_name,
+        mode: status.mode,
+        num_topics: status.num_topics,
       };
     } catch (e) {
       return {

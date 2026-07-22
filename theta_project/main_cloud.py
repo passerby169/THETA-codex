@@ -157,6 +157,8 @@ class TrainStartRequest(BaseModel):
 class TrainingJobResponse(BaseModel):
     id: int
     user_id: int
+    file_id: Optional[int] = None
+    dataset_name: Optional[str] = None
     status: str
     dlc_job_id: Optional[str]
     run_id: Optional[str] = None
@@ -180,11 +182,17 @@ class TrainingJobResponse(BaseModel):
 
 class TrainingStatusResponse(BaseModel):
     job_id: int
+    file_id: Optional[int] = None
+    dataset_name: Optional[str] = None
     status: str
     dlc_job_id: Optional[str] = None
     error_message: Optional[str] = None
     created_at: datetime
     message: str
+    model_type: Optional[str] = None
+    model_size: Optional[str] = None
+    num_topics: Optional[int] = None
+    mode: Optional[str] = None
 
 
 class TrainingMetricsResponse(BaseModel):
@@ -875,9 +883,42 @@ def set_training_cancel_flag(job_id: int) -> None:
         print(f"[cancel] failed to write Redis cancel flag for job {job_id}: {exc}")
 
 
+TERMINAL_TRAINING_STATUSES = {"succeeded", "failed", "cancelled"}
+
+
+def reconcile_training_job_from_storage(job: TrainingJob, username: str, db: Session) -> TrainingJob:
+    """Recover a missed worker callback from its durable training log."""
+    # Only active jobs need recovery. Terminal jobs have already been finalized.
+    if job.status in TERMINAL_TRAINING_STATUSES or not job.run_id or not job.dataset_name:
+        return job
+
+    log_key = (
+        f"results/{username}/{job.dataset_name}/"
+        f"{job.model_type or 'theta'}/{job.run_id}/training_log.json"
+    )
+    try:
+        if not storage.object_exists(log_key):
+            return job
+        log_data = storage.get_object_json(log_key)
+        stored_status = str(log_data.get("status", "")).lower()
+        if stored_status not in TERMINAL_TRAINING_STATUSES:
+            return job
+        job.status = stored_status
+        job.error_message = None if stored_status == "succeeded" else str(
+            log_data.get("message") or stored_status
+        )
+        db.commit()
+        db.refresh(job)
+    except Exception as exc:
+        print(f"[training-status] storage reconciliation skipped for job {job.id}: {exc}")
+    return job
+
+
 @app.get("/api/train/{job_id}/status", response_model=TrainingStatusResponse)
 def get_training_status(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    job = get_job_for_user(job_id, current_user.id, db)
+    job = reconcile_training_job_from_storage(
+        get_job_for_user(job_id, current_user.id, db), current_user.username, db
+    )
     if job.error_message:
         message = job.error_message
     elif job.status == "succeeded":
@@ -890,11 +931,17 @@ def get_training_status(job_id: int, current_user: User = Depends(get_current_us
         message = "Training job is running on external training worker"
     return TrainingStatusResponse(
         job_id=job.id,
+        file_id=job.file_id,
+        dataset_name=job.dataset_name,
         status=job.status,
         dlc_job_id=job.dlc_job_id,
         error_message=job.error_message,
         created_at=job.created_at,
         message=message,
+        model_type=job.model_type,
+        model_size=job.model_size,
+        num_topics=job.num_topics,
+        mode=job.mode,
     )
 
 
@@ -1008,12 +1055,13 @@ def training_callback(request: dict, db: Session = Depends(get_db)):
 
 @app.get("/api/train/jobs", response_model=List[TrainingJobResponse])
 def get_training_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return (
+    jobs = (
         db.query(TrainingJob)
         .filter(TrainingJob.user_id == current_user.id)
         .order_by(TrainingJob.created_at.desc())
         .all()
     )
+    return [reconcile_training_job_from_storage(job, current_user.username, db) for job in jobs]
 
 
 @app.get("/api/data/oss-datasets")
