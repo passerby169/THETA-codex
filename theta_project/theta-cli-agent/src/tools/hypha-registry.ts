@@ -1,6 +1,7 @@
 import { ToolRegistry } from '@hypha/tools';
 import { thetaModelCatalogHandler, thetaModelCatalogToolSpec } from './model-catalog-tool.js';
 import { thetaModelRecommendHandler, thetaModelRecommendToolSpec } from './model-recommend-tool.js';
+import { thetaPlanCreateHandler, thetaPlanCreateToolSpec } from './plan-create-tool.js';
 import { thetaPlanValidateHandler, thetaPlanValidateToolSpec } from './plan-validate-tool.js';
 
 export const registerThetaModelCatalogTool = (registry: ToolRegistry): ToolRegistry => {
@@ -13,5 +14,6 @@ export const createThetaHyphaToolRegistry = (): ToolRegistry => {
   registerThetaModelCatalogTool(registry);
   registry.register(thetaModelRecommendToolSpec, thetaModelRecommendHandler, { replace: true });
   registry.register(thetaPlanValidateToolSpec, thetaPlanValidateHandler, { replace: true });
+  registry.register(thetaPlanCreateToolSpec, thetaPlanCreateHandler, { replace: true });
   return registry;
 };
