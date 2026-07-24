@@ -13,7 +13,8 @@
     "hypha:build": "npm --prefix ../Hypha run build:packages",
     "smoke:hypha-import": "node dist/hypha-import-smoke.js",
     "smoke:hypha-registry": "node dist/hypha-registry-smoke.js",
-    "smoke:hypha-runner": "node dist/hypha-runner-smoke.js"
+    "smoke:hypha-runner": "node dist/hypha-runner-smoke.js",
+    "smoke:hypha-model-recommend": "node dist/hypha-model-recommend-smoke.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",

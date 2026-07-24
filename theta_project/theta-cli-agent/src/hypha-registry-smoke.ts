@@ -3,6 +3,7 @@ import { createThetaHyphaToolRegistry } from './tools/hypha-registry.js';
 
 const registry = createThetaHyphaToolRegistry();
 const spec = registry.getSpec(THETA_TOOL_IDS.modelCatalog);
+const registeredToolIds = registry.list().map((tool) => tool.id).sort();
 
 if (!spec) {
   throw new Error(`${THETA_TOOL_IDS.modelCatalog} was not registered.`);
@@ -15,5 +16,6 @@ console.log(
     toolId: spec.id,
     sideEffectLevel: spec.sideEffectLevel,
     permissionScope: spec.permissionScope,
+    registeredToolIds,
   })
 );
