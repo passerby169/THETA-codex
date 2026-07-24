@@ -3,6 +3,7 @@ import { GovernedToolRunner, type ToolCallContext, type ToolCallResult } from '@
 import { createThetaHyphaToolRegistry } from './hypha-registry.js';
 import type { ThetaModelCatalogInput, ThetaModelCatalogOutput } from './model-catalog-tool.js';
 import type { ThetaModelRecommendInput, ThetaModelRecommendOutput } from './model-recommend-tool.js';
+import type { ThetaPlanValidateInput, ThetaPlanValidateOutput } from './plan-validate-tool.js';
 import { THETA_PERMISSION_SCOPES, THETA_TOOL_IDS } from './tool-ids.js';
 
 export interface ThetaHyphaRunnerOptions {
@@ -72,4 +73,22 @@ export const runThetaModelRecommend = async (
       ],
     }),
   }) as Promise<ToolCallResult<ThetaModelRecommendOutput>>;
+};
+
+export const runThetaPlanValidate = async (
+  input: ThetaPlanValidateInput,
+  options: ThetaHyphaRunnerOptions = {}
+): Promise<ToolCallResult<ThetaPlanValidateOutput>> => {
+  const { runner } = createThetaHyphaRuntime();
+  return runner.run({
+    toolId: THETA_TOOL_IDS.planValidate,
+    input,
+    context: createThetaToolCallContext('theta-plan-validate-smoke', 'plan_validate', {
+      ...options,
+      permissionScopes: options.permissionScopes ?? [
+        THETA_PERMISSION_SCOPES.planRead,
+        THETA_PERMISSION_SCOPES.modelRead,
+      ],
+    }),
+  }) as Promise<ToolCallResult<ThetaPlanValidateOutput>>;
 };

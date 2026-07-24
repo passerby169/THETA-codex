@@ -9,6 +9,10 @@ if (!spec) {
   throw new Error(`${THETA_TOOL_IDS.modelCatalog} was not registered.`);
 }
 
+if (!registry.getSpec(THETA_TOOL_IDS.modelRecommend) || !registry.getSpec(THETA_TOOL_IDS.planValidate)) {
+  throw new Error('Expected model.recommend and plan.validate to be registered.');
+}
+
 console.log(
   JSON.stringify({
     status: 'ok',
